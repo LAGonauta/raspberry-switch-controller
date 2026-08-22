@@ -222,21 +222,42 @@ const RUMBLE_AMPLITUDES: &[(u8, u16, u16)] = &[
 ];
 
 /// Look up the amplitude for an HF-band code (even byte).
+/// Uses direct index lookup since HF codes are even numbers 0x00..=0xc8.
 fn hf_amp(hf_code: u8) -> u16 {
-    RUMBLE_AMPLITUDES
-        .iter()
-        .min_by_key(|(h, _, _)| (*h as i16 - hf_code as i16).abs())
-        .map(|(_, _, amp)| *amp)
-        .unwrap_or(0)
+    // HF codes are even numbers from 0x00 to 0xc8 (101 entries)
+    // Index = hf_code / 2, clamped to valid range
+    let idx = (hf_code / 2) as usize;
+    if idx < RUMBLE_AMPLITUDES.len() {
+        RUMBLE_AMPLITUDES[idx].2
+    } else {
+        // Find closest match for out-of-range codes
+        RUMBLE_AMPLITUDES
+            .iter()
+            .min_by_key(|(h, _, _)| (*h as i16 - hf_code as i16).abs())
+            .map(|(_, _, amp)| *amp)
+            .unwrap_or(0)
+    }
 }
 
 /// Look up the amplitude for an LF-band code (bit 15 + low byte).
+/// Uses HashMap for O(1) lookup instead of linear search.
 fn lf_amp(lf_code: u16) -> u16 {
-    RUMBLE_AMPLITUDES
-        .iter()
-        .min_by_key(|(_, l, _)| (*l as i32 - lf_code as i32).abs())
-        .map(|(_, _, amp)| *amp)
-        .unwrap_or(0)
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    
+    static LF_MAP: OnceLock<HashMap<u16, u16>> = OnceLock::new();
+    let map = LF_MAP.get_or_init(|| {
+        RUMBLE_AMPLITUDES.iter().map(|(_, l, amp)| (*l, *amp)).collect()
+    });
+    
+    map.get(&lf_code).copied().unwrap_or_else(|| {
+        // Find closest match for codes not in table
+        RUMBLE_AMPLITUDES
+            .iter()
+            .min_by_key(|(_, l, _)| (*l as i32 - lf_code as i32).abs())
+            .map(|(_, _, amp)| *amp)
+            .unwrap_or(0)
+    })
 }
 
 /// Decode one 4-byte rumble group into the louder of its HF/LF band
