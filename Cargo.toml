@@ -1,0 +1,16 @@
+[package]
+name = "raspberry-switch-controller"
+version = "0.1.0"
+edition = "2021"
+authors = ["raspberry-switch-controller"]
+description = "Bridge Xbox wireless controllers to a Nintendo Switch over USB OTG gadget mode"
+
+[dependencies]
+gilrs = "0.11"
+flume = "0.10"
+ctrlc = "3.1"
+clap = { version = "4", features = ["derive"] }
+atomic = "0.5"
+
+[profile.release]
+lto = true
