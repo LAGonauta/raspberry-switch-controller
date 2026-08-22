@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use atomic::Atomic;
 use flume::{Receiver, Sender};
 
 use crate::models::{AppState, Rumble, SwitchInput, NEUTRAL_INPUT};
@@ -164,7 +163,7 @@ pub fn run_slot(
     input_rx: Receiver<SwitchInput>,
     rumble_tx: Sender<Rumble>,
     tick: Duration,
-    state: Arc<Atomic<AppState>>,
+    state: Arc<Mutex<AppState>>,
 ) {
     let file = match fs::OpenOptions::new().read(true).write(true).open(path) {
         Ok(f) => f,
@@ -209,7 +208,7 @@ pub fn run_slot(
         let mut buf = [0u8; READ_BUF_LEN];
         thread::spawn(move || {
             loop {
-                if state.load(Ordering::Relaxed).is_exiting() {
+                if state.lock().unwrap().is_exiting() {
                     break;
                 }
                 let n = match read_file.read(&mut buf) {
@@ -278,7 +277,7 @@ pub fn run_slot(
     // Writer loop: input reports on ticker.
     let mut latest = NEUTRAL_INPUT;
     loop {
-        if state.load(Ordering::Relaxed).is_exiting() {
+        if state.lock().unwrap().is_exiting() {
             break;
         }
 

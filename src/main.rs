@@ -4,12 +4,10 @@ mod mapping;
 mod models;
 mod switch_proto;
 
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use atomic::Atomic;
 use clap::Parser;
 
 use crate::gadget::GadgetManager;
@@ -50,7 +48,7 @@ fn main() {
         );
     }
 
-    let state = Arc::new(Atomic::new(AppState::Connected));
+    let state = Arc::new(Mutex::new(AppState::Connected));
 
     // Create the composite USB gadget with N HID functions.
     let manager = GadgetManager::new();
@@ -103,7 +101,7 @@ fn main() {
 
     let _ = shutdown_rx.recv();
     println!("Shutting down...");
-    state.store(AppState::Exiting, Ordering::Relaxed);
+    *state.lock().unwrap() = AppState::Exiting;
 
     let _ = bridge_thread.join();
     for handle in slot_threads {

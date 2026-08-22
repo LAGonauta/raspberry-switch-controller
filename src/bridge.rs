@@ -2,12 +2,10 @@
 //! sends `SwitchInput` to each slot, and applies incoming rumble.
 
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use atomic::Atomic;
 use flume::{Receiver, Sender};
 use gilrs::{ff::Effect, ff::{BaseEffect, BaseEffectType, EffectBuilder}, GamepadId, Gilrs};
 
@@ -41,7 +39,7 @@ pub fn run(
     input_tx: Vec<Sender<SwitchInput>>,
     rumble_rx: Receiver<Rumble>,
     polling_rate: u32,
-    state: Arc<Atomic<AppState>>,
+    state: Arc<Mutex<AppState>>,
 ) {
     let mut gilrs = match Gilrs::new() {
         Ok(g) => g,
@@ -75,7 +73,7 @@ pub fn run(
     let tick = Duration::from_micros(1_000_000 / polling_rate.max(1) as u64);
 
     loop {
-        if state.load(Ordering::Relaxed).is_exiting() {
+        if state.lock().unwrap().is_exiting() {
             break;
         }
 
