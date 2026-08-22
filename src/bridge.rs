@@ -143,7 +143,9 @@ pub fn run(
                             controller.slot
                         );
                         slot_occupied[controller.slot] = false;
-                        effects.remove(&event.id);
+                        if let Some(effect) = effects.remove(&event.id) {
+                            let _ = effect.stop();
+                        }
                         effect_magnitude.remove(&event.id);
                     }
                 }
