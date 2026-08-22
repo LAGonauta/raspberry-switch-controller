@@ -204,7 +204,6 @@ pub fn run_slot(
         let state = state.clone();
         let count = count.clone();
         let input_active = input_active.clone();
-        let latest = NEUTRAL_INPUT;
         let mut buf = [0u8; READ_BUF_LEN];
         thread::spawn(move || {
             loop {
@@ -247,16 +246,16 @@ pub fn run_slot(
                         }
                         let c = count.load(Ordering::Relaxed);
                         let response = match report[10] {
-                            0x01 => switch_proto::pairing_response(c, &latest, report[10]),
-                            0x02 => switch_proto::device_info_subcommand_response(c, &latest, report[10]),
+                            0x01 => switch_proto::pairing_response(c, &NEUTRAL_INPUT, report[10]),
+                            0x02 => switch_proto::device_info_subcommand_response(c, &NEUTRAL_INPUT, report[10]),
                             0x03 | 0x04 | 0x08 | 0x30 | 0x38 | 0x40 | 0x41 | 0x48 => {
-                                switch_proto::subcommand_response(c, &latest, true, report[10], &[])
+                                switch_proto::subcommand_response(c, &NEUTRAL_INPUT, true, report[10], &[])
                             }
-                            0x10 => match switch_proto::spi_read_response(c, &latest, report) {
+                            0x10 => match switch_proto::spi_read_response(c, &NEUTRAL_INPUT, report) {
                                 Some(resp) => resp,
-                                None => switch_proto::subcommand_response(c, &latest, false, report[10], &[]),
+                                None => switch_proto::subcommand_response(c, &NEUTRAL_INPUT, false, report[10], &[]),
                             },
-                            0x21 => switch_proto::set_report_mode_response(c, &latest, report[10]),
+                            0x21 => switch_proto::set_report_mode_response(c, &NEUTRAL_INPUT, report[10]),
                             _ => continue,
                         };
                         let mut guard = write_lock.lock().unwrap();
