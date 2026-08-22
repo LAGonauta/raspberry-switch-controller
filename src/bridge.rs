@@ -89,24 +89,31 @@ pub fn run(
                 }
                 let needs_update = effect_magnitude.get(&controller.id).copied() != Some(magnitude);
                 if needs_update {
+                    // Stop and remove old effect if it exists
                     if let Some(old) = effects.remove(&controller.id) {
                         let _ = old.stop();
                     }
-                    if let Some(effect) = effect_for_gamepad(controller.id, &mut gilrs, magnitude) {
-                        effects.insert(controller.id, effect);
-                        effect_magnitude.insert(controller.id, magnitude);
-                    } else {
-                        // Creation failed; forget the magnitude so a later
-                        // rumble event retries instead of being skipped.
-                        effect_magnitude.remove(&controller.id);
+                    // Create new effect and update magnitude cache atomically
+                    match effect_for_gamepad(controller.id, &mut gilrs, magnitude) {
+                        Some(effect) => {
+                            effects.insert(controller.id, effect);
+                            effect_magnitude.insert(controller.id, magnitude);
+                        }
+                        None => {
+                            // Creation failed; forget the magnitude so a later
+                            // rumble event retries instead of being skipped.
+                            effect_magnitude.remove(&controller.id);
+                            continue;
+                        }
                     }
                 }
-                if magnitude > 0 {
-                    if let Some(effect) = effects.get(&controller.id) {
+                // Play or stop the effect based on magnitude
+                if let Some(effect) = effects.get(&controller.id) {
+                    if magnitude > 0 {
                         let _ = effect.play();
+                    } else {
+                        let _ = effect.stop();
                     }
-                } else if let Some(effect) = effects.get(&controller.id) {
-                    let _ = effect.stop();
                 }
             }
         }
