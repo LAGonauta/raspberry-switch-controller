@@ -90,7 +90,9 @@ impl GadgetManager {
         for i in 0..n {
             let dev = PathBuf::from(format!("/dev/hidg{}", i));
             if dev.exists() {
-                let _ = fs::set_permissions(&dev, fs::Permissions::from_mode(0o666));
+                if let Err(e) = fs::set_permissions(&dev, fs::Permissions::from_mode(0o666)) {
+                    eprintln!("Warning: unable to set permissions on {}: {}", dev.display(), e);
+                }
             }
         }
 
