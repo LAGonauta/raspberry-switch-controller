@@ -7,7 +7,11 @@ use std::thread;
 use std::time::Duration;
 
 use flume::{Receiver, Sender};
-use gilrs::{ff::Effect, ff::{BaseEffect, BaseEffectType, EffectBuilder}, GamepadId, Gilrs};
+use gilrs::{
+    ff::Effect,
+    ff::{BaseEffect, BaseEffectType, EffectBuilder},
+    GamepadId, Gilrs,
+};
 
 use crate::mapping::Mapping;
 use crate::models::{AppState, Controller, Rumble, SwitchInput, NEUTRAL_INPUT};
@@ -28,7 +32,11 @@ fn effect_for_gamepad(id: GamepadId, gilrs: &mut Gilrs, magnitude: u16) -> Optio
     {
         Ok(effect) => Some(effect),
         Err(e) => {
-            eprintln!("Unable to create rumble effect for {}: {}", gilrs.gamepad(id).name(), e);
+            eprintln!(
+                "Unable to create rumble effect for {}: {}",
+                gilrs.gamepad(id).name(),
+                e
+            );
             None
         }
     }
@@ -58,15 +66,25 @@ pub fn run(
     // Attach any already-connected pads.
     for gamepad_id in gilrs.gamepads().map(|(id, _)| id).collect::<Vec<_>>() {
         if let Some(slot) = lowest_free_slot(&slot_occupied) {
-            println!("{} attached to slot {}", gilrs.gamepad(gamepad_id).name(), slot);
+            println!(
+                "{} attached to slot {}",
+                gilrs.gamepad(gamepad_id).name(),
+                slot
+            );
             slot_occupied[slot] = true;
-            controllers.push(Controller { id: gamepad_id, slot });
+            controllers.push(Controller {
+                id: gamepad_id,
+                slot,
+            });
             if let Some(effect) = effect_for_gamepad(gamepad_id, &mut gilrs, 0) {
                 effects.insert(gamepad_id, effect);
                 effect_magnitude.insert(gamepad_id, 0);
             }
         } else {
-            println!("{} not attached: no free slot", gilrs.gamepad(gamepad_id).name());
+            println!(
+                "{} not attached: no free slot",
+                gilrs.gamepad(gamepad_id).name()
+            );
         }
     }
 
@@ -125,7 +143,11 @@ pub fn run(
                     }
                     match lowest_free_slot(&slot_occupied) {
                         Some(slot) => {
-                            println!("{} connected, assigned slot {}", gilrs.gamepad(event.id).name(), slot);
+                            println!(
+                                "{} connected, assigned slot {}",
+                                gilrs.gamepad(event.id).name(),
+                                slot
+                            );
                             slot_occupied[slot] = true;
                             controllers.push(Controller { id: event.id, slot });
                             if let Some(effect) = effect_for_gamepad(event.id, &mut gilrs, 0) {

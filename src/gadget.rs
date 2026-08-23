@@ -90,7 +90,11 @@ impl GadgetManager {
             let dev = PathBuf::from(format!("/dev/hidg{}", i));
             if dev.exists() {
                 if let Err(e) = fs::set_permissions(&dev, fs::Permissions::from_mode(0o666)) {
-                    eprintln!("Warning: unable to set permissions on {}: {}", dev.display(), e);
+                    eprintln!(
+                        "Warning: unable to set permissions on {}: {}",
+                        dev.display(),
+                        e
+                    );
                 }
             }
         }
@@ -248,15 +252,37 @@ pub fn run_slot(
                         let c = count.load(Ordering::Relaxed);
                         let response = match report[10] {
                             0x01 => switch_proto::pairing_response(c, &NEUTRAL_INPUT, report[10]),
-                            0x02 => switch_proto::device_info_subcommand_response(c, &NEUTRAL_INPUT, report[10]),
+                            0x02 => switch_proto::device_info_subcommand_response(
+                                c,
+                                &NEUTRAL_INPUT,
+                                report[10],
+                            ),
                             0x03 | 0x04 | 0x08 | 0x30 | 0x38 | 0x40 | 0x41 | 0x48 => {
-                                switch_proto::subcommand_response(c, &NEUTRAL_INPUT, true, report[10], &[])
+                                switch_proto::subcommand_response(
+                                    c,
+                                    &NEUTRAL_INPUT,
+                                    true,
+                                    report[10],
+                                    &[],
+                                )
                             }
-                            0x10 => match switch_proto::spi_read_response(c, &NEUTRAL_INPUT, report) {
-                                Some(resp) => resp,
-                                None => switch_proto::subcommand_response(c, &NEUTRAL_INPUT, false, report[10], &[]),
-                            },
-                            0x21 => switch_proto::set_report_mode_response(c, &NEUTRAL_INPUT, report[10]),
+                            0x10 => {
+                                match switch_proto::spi_read_response(c, &NEUTRAL_INPUT, report) {
+                                    Some(resp) => resp,
+                                    None => switch_proto::subcommand_response(
+                                        c,
+                                        &NEUTRAL_INPUT,
+                                        false,
+                                        report[10],
+                                        &[],
+                                    ),
+                                }
+                            }
+                            0x21 => switch_proto::set_report_mode_response(
+                                c,
+                                &NEUTRAL_INPUT,
+                                report[10],
+                            ),
                             _ => continue,
                         };
                         let mut guard = write_lock.lock().unwrap();
@@ -265,7 +291,10 @@ pub fn run_slot(
                     // Rumble-only output report. (0x11 is MCU/NFC data, not rumble.)
                     0x10 => {
                         if let Some(mag) = switch_proto::decode_rumble(report) {
-                            let _ = rumble_tx.try_send(Rumble { slot, magnitude: mag });
+                            let _ = rumble_tx.try_send(Rumble {
+                                slot,
+                                magnitude: mag,
+                            });
                         }
                     }
                     _ => {}

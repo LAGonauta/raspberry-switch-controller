@@ -25,8 +25,8 @@ impl Mapping {
         SwitchInput {
             // Buttons (A/B/X/Y swapped, following xboxjoystick.go).
             b: gamepad.is_pressed(Button::South), // Xbox A -> Switch B
-            a: gamepad.is_pressed(Button::East), // Xbox B -> Switch A
-            y: gamepad.is_pressed(Button::West), // Xbox X -> Switch Y
+            a: gamepad.is_pressed(Button::East),  // Xbox B -> Switch A
+            y: gamepad.is_pressed(Button::West),  // Xbox X -> Switch Y
             x: gamepad.is_pressed(Button::North), // Xbox Y -> Switch X
             l: gamepad.is_pressed(Button::LeftTrigger),
             r: gamepad.is_pressed(Button::RightTrigger),
