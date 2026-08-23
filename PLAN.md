@@ -129,7 +129,7 @@ Create once at startup:
   `libcomposite` in `/etc/modules`, reboot.
 - Install **xone** kernel driver (medusalix) for the official Xbox wireless
   dongle; pair controllers. Verify they appear as gamepads.
-- Rust toolchain; cross-compile via existing `Cross.toml` (ARM64/ARMv7) or
+- Rust toolchain; cross-compile via `Cross.toml` (uses pre-build dependencies for aarch64) or
   build natively on the Pi.
 
 ## 10. Build / verify

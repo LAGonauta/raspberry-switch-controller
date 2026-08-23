@@ -23,7 +23,10 @@ sudo ./target/release/raspberry-switch-controller --controllers 4 --polling-rate
 - `--polling-rate <Hz>`: 20-1000 Hz (default 250)
 
 ### Cross-compilation
-Root project has no `Cross.toml`. Reference `HIDtoVPADNetworkClientCli/Cross.toml` for ARM targets (uses local Docker images).
+Root project has `Cross.toml` with pre-build dependencies for aarch64 (RPi4).
+```bash
+CROSS_CONTAINER_ENGINE=podman cross build --target aarch64-unknown-linux-gnu --release
+```
 
 ## Hardware Requirements
 
