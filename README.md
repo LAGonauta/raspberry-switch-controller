@@ -1,3 +1,7 @@
+# ALPHA SOFTWARE WIP
+
+Do not use!
+
 # Raspberry Switch Controller
 
 Bridge Xbox wireless controllers to a Nintendo Switch over USB OTG gadget mode on Raspberry Pi 4.
