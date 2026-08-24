@@ -323,8 +323,6 @@ pub fn run_slot(
             if guard.write_all(&report).is_err() {
                 break;
             }
-        } else {
-            thread::sleep(tick);
         }
     }
 }

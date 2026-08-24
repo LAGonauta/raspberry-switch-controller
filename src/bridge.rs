@@ -2,9 +2,11 @@
 //! sends `SwitchInput` to each slot, and applies incoming rumble.
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+
+use governor::{Quota, RateLimiter, clock::{self, Clock}};
 
 use flume::{Receiver, Sender};
 use gilrs::{
@@ -90,7 +92,11 @@ pub fn run(
         }
     }
 
-    let tick = Duration::from_micros(1_000_000 / polling_rate.max(1) as u64);
+    let clock = clock::DefaultClock::default();
+    let limiter = RateLimiter::direct_with_clock(
+        Quota::per_second(NonZeroU32::new(polling_rate).unwrap()).allow_burst(NonZeroU32::new(1u32).unwrap()),
+        &clock
+    );
 
     loop {
         if state.lock().unwrap().is_exiting() {
@@ -191,7 +197,9 @@ pub fn run(
             let _ = tx.send(input);
         }
 
-        thread::sleep(tick);
+        if let Err(e) = limiter.check() {
+            thread::sleep(e.wait_time_from(clock.now()));
+        }
     }
 }
 
