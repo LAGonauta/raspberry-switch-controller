@@ -4,6 +4,8 @@
 //! (`encode_input` / `pack_shorts`), the SPI ROM data map, and packet
 //! construction for input reports, handshake and subcommand responses.
 
+use log::warn;
+
 use crate::models::{Stick, SwitchInput};
 
 /// SPI ROM data served in response to subcommand `0x10` reads.
@@ -130,8 +132,8 @@ pub fn packet(ack: u8, cmd: u8, payload: &[u8]) -> Vec<u8> {
     data.push(ack);
     data.push(cmd);
     if payload.len() > 62 {
-        eprintln!(
-            "Warning: packet payload truncated from {} to 62 bytes",
+        warn!(
+            "Packet payload truncated from {} to 62 bytes",
             payload.len()
         );
     }

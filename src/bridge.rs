@@ -13,6 +13,8 @@ use gilrs::{
     GamepadId, Gilrs,
 };
 
+use log::{info, warn, error};
+
 use crate::mapping::Mapping;
 use crate::models::{AppState, Controller, Rumble, SwitchInput, NEUTRAL_INPUT};
 
@@ -32,7 +34,7 @@ fn effect_for_gamepad(id: GamepadId, gilrs: &mut Gilrs, magnitude: u16) -> Optio
     {
         Ok(effect) => Some(effect),
         Err(e) => {
-            eprintln!(
+            warn!(
                 "Unable to create rumble effect for {}: {}",
                 gilrs.gamepad(id).name(),
                 e
@@ -52,7 +54,7 @@ pub fn run(
     let mut gilrs = match Gilrs::new() {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("Unable to initialise gilrs: {}", e);
+            error!("Unable to initialise gilrs: {}", e);
             return;
         }
     };
@@ -66,7 +68,7 @@ pub fn run(
     // Attach any already-connected pads.
     for gamepad_id in gilrs.gamepads().map(|(id, _)| id).collect::<Vec<_>>() {
         if let Some(slot) = lowest_free_slot(&slot_occupied) {
-            println!(
+            info!(
                 "{} attached to slot {}",
                 gilrs.gamepad(gamepad_id).name(),
                 slot
@@ -81,7 +83,7 @@ pub fn run(
                 effect_magnitude.insert(gamepad_id, 0);
             }
         } else {
-            println!(
+            warn!(
                 "{} not attached: no free slot",
                 gilrs.gamepad(gamepad_id).name()
             );
@@ -143,7 +145,7 @@ pub fn run(
                     }
                     match lowest_free_slot(&slot_occupied) {
                         Some(slot) => {
-                            println!(
+                            info!(
                                 "{} connected, assigned slot {}",
                                 gilrs.gamepad(event.id).name(),
                                 slot
@@ -155,7 +157,7 @@ pub fn run(
                                 effect_magnitude.insert(event.id, 0);
                             }
                         }
-                        None => println!(
+                        None => warn!(
                             "{} connected but no free slot",
                             gilrs.gamepad(event.id).name()
                         ),
@@ -164,7 +166,7 @@ pub fn run(
                 gilrs::EventType::Disconnected => {
                     if let Some(pos) = controllers.iter().position(|c| c.id == event.id) {
                         let controller = controllers.remove(pos);
-                        println!(
+                        info!(
                             "{} disconnected, slot {} freed",
                             gilrs.gamepad(event.id).name(),
                             controller.slot

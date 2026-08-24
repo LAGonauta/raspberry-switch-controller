@@ -16,6 +16,8 @@ use std::time::Duration;
 
 use flume::{Receiver, Sender};
 
+use log::{warn, error};
+
 use crate::models::{AppState, Rumble, SwitchInput, NEUTRAL_INPUT};
 use crate::switch_proto;
 
@@ -90,8 +92,8 @@ impl GadgetManager {
             let dev = PathBuf::from(format!("/dev/hidg{}", i));
             if dev.exists() {
                 if let Err(e) = fs::set_permissions(&dev, fs::Permissions::from_mode(0o666)) {
-                    eprintln!(
-                        "Warning: unable to set permissions on {}: {}",
+                    warn!(
+                        "Unable to set permissions on {}: {}",
                         dev.display(),
                         e
                     );
@@ -172,7 +174,7 @@ pub fn run_slot(
     let file = match fs::OpenOptions::new().read(true).write(true).open(path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("[slot {}] Unable to open {}: {}", slot, path, e);
+            error!("[slot {}] Unable to open {}: {}", slot, path, e);
             return;
         }
     };
@@ -181,7 +183,7 @@ pub fn run_slot(
     let mut read_file = match write_lock.lock().unwrap().try_clone() {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("[slot {}] Unable to clone device file: {}", slot, e);
+            error!("[slot {}] Unable to clone device file: {}", slot, e);
             return;
         }
     };

@@ -10,6 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
+use log::{info, warn, error};
 
 use crate::gadget::GadgetManager;
 use crate::models::{AppState, SwitchInput, DEFAULT_SLOTS, MAX_SLOTS};
@@ -36,19 +37,21 @@ struct Cli {
 }
 
 fn main() {
+    pretty_env_logger::init();
+    
     let cli = Cli::parse();
 
     let num_slots = cli.controllers.clamp(MIN_SLOTS, MAX_SLOTS);
     if cli.controllers < MIN_SLOTS || cli.controllers > MAX_SLOTS {
-        eprintln!(
-            "Warning: --controllers must be between {} and {}; using {}",
+        warn!(
+            "--controllers must be between {} and {}; using {}",
             MIN_SLOTS, MAX_SLOTS, num_slots
         );
     }
     let polling_rate = cli.polling_rate.clamp(MIN_POLLING_RATE, MAX_POLLING_RATE);
     if cli.polling_rate < MIN_POLLING_RATE || cli.polling_rate > MAX_POLLING_RATE {
-        eprintln!(
-            "Warning: --polling-rate must be between {} and {} Hz; using {}",
+        warn!(
+            "--polling-rate must be between {} and {} Hz; using {}",
             MIN_POLLING_RATE, MAX_POLLING_RATE, polling_rate
         );
     }
@@ -58,10 +61,10 @@ fn main() {
     // Create the composite USB gadget with N HID functions.
     let manager = GadgetManager::new();
     if let Err(e) = manager.create(num_slots) {
-        eprintln!("Unable to create USB gadget (run as root?): {}", e);
+        error!("Unable to create USB gadget (run as root?): {}", e);
         std::process::exit(1);
     }
-    println!(
+    info!(
         "USB gadget created with {} Pro Controller slot(s) ({} Hz)",
         num_slots, polling_rate
     );
@@ -88,8 +91,8 @@ fn main() {
         slot_threads.push(thread::spawn(move || {
             // Set realtime priority for slot thread (USB gadget I/O).
             if let Err(e) = priority::set_realtime_priority(10) {
-                eprintln!(
-                    "[slot {}] Warning: unable to set realtime priority: {}",
+                warn!(
+                    "[slot {}] Unable to set realtime priority: {}",
                     slot, e
                 );
             }
@@ -102,7 +105,7 @@ fn main() {
     let bridge_thread = thread::spawn(move || {
         // Set realtime priority for bridge thread (input polling).
         if let Err(e) = priority::set_realtime_priority(10) {
-            eprintln!("Warning: unable to set realtime priority for bridge: {}", e);
+            warn!("Unable to set realtime priority for bridge: {}", e);
         }
         bridge::run(num_slots, input_tx, rumble_rx, polling_rate, bridge_state);
     });
@@ -112,11 +115,11 @@ fn main() {
     if let Err(e) = ctrlc::set_handler(move || {
         let _ = shutdown_tx.send(());
     }) {
-        eprintln!("Unable to set Ctrl-C handler: {}", e);
+        error!("Unable to set Ctrl-C handler: {}", e);
     }
 
     let _ = shutdown_rx.recv();
-    println!("Shutting down...");
+    info!("Shutting down...");
     *state.lock().unwrap() = AppState::Exiting;
 
     let _ = bridge_thread.join();
@@ -125,5 +128,5 @@ fn main() {
     }
 
     manager.destroy();
-    println!("Gadget torn down. Goodbye.");
+    info!("Gadget torn down. Goodbye.");
 }
