@@ -177,12 +177,11 @@ pub fn subcommand_response(
     packet(0x21, count, &buf)
 }
 
-/// Per-slot MAC address. The base bytes are offset by the slot index so each
-/// slot presents a distinct identity to the Switch (slot 0 keeps the original
-/// fixed MAC for compatibility).
+/// Per-slot MAC address. Each slot gets a distinct identity, derived from the
+/// slot index so no two slots (or the legacy fixed MAC) collide.
 fn slot_mac(slot: usize) -> [u8; 6] {
     let mut mac: [u8; 6] = [0x00, 0x00, 0x5e, 0x00, 0x53, 0x5e];
-    mac[5] = mac[5].wrapping_add(slot as u8);
+    mac[5] = mac[5].wrapping_add(slot as u8 + 1);
     mac
 }
 
