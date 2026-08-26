@@ -19,6 +19,23 @@ use log::{info, warn, error};
 
 use crate::mapping::Mapping;
 use crate::models::{AppState, Controller, Rumble, SwitchInput, NEUTRAL_INPUT};
+use crate::motion;
+use crate::wiimote::MotionHandle;
+
+/// Slot that receives Wiimote motion, if any.
+static MOTION_SLOT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(usize::MAX);
+/// Shared handle to the latest Wiimote sample.
+static MOTION_HANDLE: std::sync::OnceLock<MotionHandle> = std::sync::OnceLock::new();
+
+/// Attach a Wiimote motion source to a slot.
+pub fn set_motion_slot(slot: usize, handle: MotionHandle) -> Result<(), &'static str> {
+    if MOTION_HANDLE.set(handle).is_err() {
+        return Err("motion handle already set");
+    }
+    MOTION_SLOT.store(slot, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
 
 const RUMBLE_MAX_MAGNITUDE: u16 = u16::MAX;
 
@@ -190,10 +207,20 @@ pub fn run(
 
         // Poll and send per slot (idle slots send neutral reports).
         for (slot, tx) in input_tx.iter().enumerate().take(num_slots) {
-            let input = match controllers.iter().find(|c| c.slot == slot) {
+            let mut input = match controllers.iter().find(|c| c.slot == slot) {
                 Some(controller) => mapping.poll(&gilrs.gamepad(controller.id)),
                 None => NEUTRAL_INPUT,
             };
+            // Inject Wiimote motion into the bound slot.
+            if slot == MOTION_SLOT.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(handle) = MOTION_HANDLE.get() {
+                    if let Ok(motion_handle) = handle.lock() {
+                        if let Some(raw) = motion_handle.as_ref() {
+                            input.motion = motion::to_switch_motion(raw);
+                        }
+                    }
+                }
+            }
             let _ = tx.send(input);
         }
 

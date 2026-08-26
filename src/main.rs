@@ -2,8 +2,10 @@ mod bridge;
 mod gadget;
 mod mapping;
 mod models;
+mod motion;
 mod priority;
 mod switch_proto;
+mod wiimote;
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -14,6 +16,7 @@ use log::{info, warn, error};
 
 use crate::gadget::GadgetManager;
 use crate::models::{AppState, SwitchInput, DEFAULT_SLOTS, MAX_SLOTS};
+use crate::wiimote::MotionHandle;
 
 const MIN_SLOTS: usize = 1;
 const MIN_POLLING_RATE: u32 = 20;
@@ -34,6 +37,10 @@ struct Cli {
     /// Polling rate in Hz (20..1000).
     #[arg(long, short = 'p', default_value_t = DEFAULT_POLLING_RATE)]
     polling_rate: u32,
+
+    /// Slot (0..controllers) to inject Wiimote motion into. Disabled if unset.
+    #[arg(long)]
+    wiimote_slot: Option<usize>,
 }
 
 fn main() {
@@ -109,6 +116,24 @@ fn main() {
         }
         bridge::run(num_slots, input_tx, rumble_rx, polling_rate, bridge_state);
     });
+
+    // Spawn the Wiimote motion reader, if enabled.
+    if let Some(slot) = cli.wiimote_slot {
+        if slot >= num_slots {
+            warn!(
+                "--wiimote-slot {} out of range (0..{}); motion disabled",
+                slot, num_slots
+            );
+        } else {
+            let motion_handle: MotionHandle = Arc::new(Mutex::new(None));
+            let wiimote_state = state.clone();
+            wiimote::run(motion_handle.clone(), wiimote_state);
+            info!("Wiimote motion enabled for slot {}", slot);
+            if let Err(e) = bridge::set_motion_slot(slot, motion_handle) {
+                error!("Unable to attach Wiimote motion: {}", e);
+            }
+        }
+    }
 
     // Wait for Ctrl-C.
     let (shutdown_tx, shutdown_rx) = flume::unbounded::<()>();
