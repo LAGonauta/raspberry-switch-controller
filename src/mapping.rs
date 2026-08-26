@@ -53,6 +53,7 @@ impl Mapping {
                 gamepad.value(Axis::RightStickX),
                 -gamepad.value(Axis::RightStickY),
             ),
+            motion: Default::default(),
         }
     }
 

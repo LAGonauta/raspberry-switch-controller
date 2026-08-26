@@ -14,6 +14,16 @@ impl Stick {
     }
 }
 
+/// Gyroscope + accelerometer data for a single Switch Pro Controller slot,
+/// expressed in the Switch's raw int16 report units.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Motion {
+    /// Angular velocity in rad/s scaled to Switch int16 units (3 axes).
+    pub gyro: [i16; 3],
+    /// Linear acceleration in g scaled to Switch int16 units (3 axes).
+    pub accel: [i16; 3],
+}
+
 /// The state to be written to a single Switch Pro Controller slot.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SwitchInput {
@@ -42,6 +52,8 @@ pub struct SwitchInput {
 
     pub left_stick: Stick,
     pub right_stick: Stick,
+
+    pub motion: Motion,
 }
 
 /// Neutral input report: centered sticks, no buttons pressed.
@@ -66,6 +78,10 @@ pub const NEUTRAL_INPUT: SwitchInput = SwitchInput {
     right_stick_press: false,
     left_stick: Stick::new(0.0, 0.0),
     right_stick: Stick::new(0.0, 0.0),
+    motion: Motion {
+        gyro: [0; 3],
+        accel: [0; 3],
+    },
 };
 
 /// Rumble event raised by a gadget slot (from a Switch output report).
