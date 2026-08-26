@@ -260,7 +260,7 @@ pub fn run_slot(
                                 slot,
                                 report[10],
                             ),
-                            0x03 | 0x04 | 0x08 | 0x30 | 0x38 | 0x40 | 0x41 | 0x48 => {
+                            0x03 | 0x04 | 0x08 | 0x11 | 0x12 | 0x30 | 0x33 | 0x38 | 0x40 | 0x41 | 0x48 => {
                                 switch_proto::subcommand_response(
                                     c,
                                     &NEUTRAL_INPUT,
