@@ -231,7 +231,7 @@ pub fn run_slot(
                         let mut guard = write_lock.lock().unwrap();
                         match report[1] {
                             0x01 => {
-                                let resp = switch_proto::device_info_response(report[1]);
+                                let resp = switch_proto::device_info_response(slot, report[1]);
                                 let _ = guard.write_all(&resp);
                             }
                             0x02 | 0x03 => {
@@ -257,6 +257,7 @@ pub fn run_slot(
                             0x02 => switch_proto::device_info_subcommand_response(
                                 c,
                                 &NEUTRAL_INPUT,
+                                slot,
                                 report[10],
                             ),
                             0x03 | 0x04 | 0x08 | 0x30 | 0x38 | 0x40 | 0x41 | 0x48 => {

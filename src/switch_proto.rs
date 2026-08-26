@@ -177,9 +177,20 @@ pub fn subcommand_response(
     packet(0x21, count, &buf)
 }
 
+/// Per-slot MAC address. The base bytes are offset by the slot index so each
+/// slot presents a distinct identity to the Switch (slot 0 keeps the original
+/// fixed MAC for compatibility).
+fn slot_mac(slot: usize) -> [u8; 6] {
+    let mut mac: [u8; 6] = [0x00, 0x00, 0x5e, 0x00, 0x53, 0x5e];
+    mac[5] = mac[5].wrapping_add(slot as u8);
+    mac
+}
+
 /// Device-info response for `0x80/0x01` (host output report type 0x01).
-pub fn device_info_response(cmd: u8) -> Vec<u8> {
-    packet(0x81, cmd, &[0x00, 0x03, 0x00, 0x00, 0x5e, 0x00, 0x53, 0x5e])
+pub fn device_info_response(slot: usize, cmd: u8) -> Vec<u8> {
+    let mut payload = vec![0x00, 0x03];
+    payload.extend_from_slice(&slot_mac(slot));
+    packet(0x81, cmd, &payload)
 }
 
 /// Simple-ack response for `0x80/0x02` and `0x80/0x03`.
@@ -381,16 +392,16 @@ pub fn pairing_response(count: u8, input: &SwitchInput, sub_cmd: u8) -> Vec<u8> 
 }
 
 /// Response for subcommand `0x02` (request device info).
-pub fn device_info_subcommand_response(count: u8, input: &SwitchInput, sub_cmd: u8) -> Vec<u8> {
-    subcommand_response(
-        count,
-        input,
-        true,
-        sub_cmd,
-        &[
-            0x03, 0x48, 0x03, 0x02, 0x5e, 0x53, 0x00, 0x5e, 0x00, 0x00, 0x03, 0x01,
-        ],
-    )
+pub fn device_info_subcommand_response(
+    count: u8,
+    input: &SwitchInput,
+    slot: usize,
+    sub_cmd: u8,
+) -> Vec<u8> {
+    let mut data = vec![0x03, 0x48, 0x03, 0x02];
+    data.extend_from_slice(&slot_mac(slot));
+    data.extend_from_slice(&[0x03, 0x01]);
+    subcommand_response(count, input, true, sub_cmd, &data)
 }
 
 /// Build an SPI ROM read response with bounds checking (BUGS.md #14/#22).
