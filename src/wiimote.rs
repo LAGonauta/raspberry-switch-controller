@@ -29,8 +29,8 @@ pub type MotionHandle = Arc<Mutex<Option<RawMotion>>>;
 
 /// Spawn the Wiimote reader thread. It blocks waiting for a Wii Remote Plus to
 /// connect, then continuously publishes motion samples to `handle` until the
-/// app is shutting down.
-pub fn run(handle: MotionHandle, state: Arc<Mutex<AppState>>) {
+/// app is shutting down. When `debug` is set, each sample is also logged.
+pub fn run(handle: MotionHandle, state: Arc<Mutex<AppState>>, debug: bool) {
     thread::spawn(move || loop {
         if state.lock().unwrap().is_exiting() {
             break;
@@ -45,7 +45,7 @@ pub fn run(handle: MotionHandle, state: Arc<Mutex<AppState>>) {
         match new_devices.recv_timeout(Duration::from_millis(500)) {
             Ok(device) => {
                 info!("Wiimote connected");
-                run_device(device, &handle, &state);
+                run_device(device, &handle, &state, debug);
             }
             Err(_) => continue,
         }
@@ -58,6 +58,7 @@ fn run_device(
     device: Arc<Mutex<WiimoteDevice>>,
     handle: &MotionHandle,
     state: &Arc<Mutex<AppState>>,
+    debug: bool,
 ) {
     let led = OutputReport::PlayerLed(PlayerLedFlags::LED_1);
     if device.lock().unwrap().write(&led).is_err() {
@@ -124,6 +125,12 @@ fn run_device(
                             gyro_deg_s: [yaw, roll, pitch],
                             accel_g: [ax, ay, az],
                         };
+                        if debug {
+                            info!(
+                                "gyro(deg/s) yaw={:.1} roll={:.1} pitch={:.1} | accel(g) x={:.2} y={:.2} z={:.2}",
+                                yaw, roll, pitch, ax, ay, az
+                            );
+                        }
                         if let Ok(mut h) = handle.lock() {
                             *h = Some(sample);
                         }

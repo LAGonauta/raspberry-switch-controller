@@ -12,7 +12,7 @@ use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 use crate::gadget::GadgetManager;
 use crate::models::{AppState, SwitchInput, DEFAULT_SLOTS, MAX_SLOTS};
@@ -41,11 +41,15 @@ struct Cli {
     /// Slot (0..controllers) to inject Wiimote motion into. Disabled if unset.
     #[arg(long)]
     wiimote_slot: Option<usize>,
+
+    /// Log raw Wiimote gyro/accel samples for calibration/debugging.
+    #[arg(long)]
+    wiimote_debug: bool,
 }
 
 fn main() {
     pretty_env_logger::init();
-    
+
     let cli = Cli::parse();
 
     let num_slots = cli.controllers.clamp(MIN_SLOTS, MAX_SLOTS);
@@ -98,10 +102,7 @@ fn main() {
         slot_threads.push(thread::spawn(move || {
             // Set realtime priority for slot thread (USB gadget I/O).
             if let Err(e) = priority::set_realtime_priority(10) {
-                warn!(
-                    "[slot {}] Unable to set realtime priority: {}",
-                    slot, e
-                );
+                warn!("[slot {}] Unable to set realtime priority: {}", slot, e);
             }
             gadget::run_slot(slot, &path, rx, rumble_tx, tick, state);
         }));
@@ -127,7 +128,7 @@ fn main() {
         } else {
             let motion_handle: MotionHandle = Arc::new(Mutex::new(None));
             let wiimote_state = state.clone();
-            wiimote::run(motion_handle.clone(), wiimote_state);
+            wiimote::run(motion_handle.clone(), wiimote_state, cli.wiimote_debug);
             info!("Wiimote motion enabled for slot {}", slot);
             if let Err(e) = bridge::set_motion_slot(slot, motion_handle) {
                 error!("Unable to attach Wiimote motion: {}", e);
