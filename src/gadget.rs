@@ -201,6 +201,10 @@ pub fn run_slot(
 
     let count = Arc::new(AtomicU8::new(0));
     let input_active = Arc::new(AtomicBool::new(true));
+    // Report mode requested by the host via the set-report-mode subcommand.
+    // Default to full mode (0x30) and only emit input reports when the host
+    // has actually selected it.
+    let report_mode = Arc::new(AtomicU8::new(0x30));
 
     // Reader thread: host output reports + rumble. Detached on purpose: it
     // blocks in read() while the Switch is idle, so joining it would hang
@@ -211,6 +215,7 @@ pub fn run_slot(
         let state = state.clone();
         let count = count.clone();
         let input_active = input_active.clone();
+        let report_mode = report_mode.clone();
         let mut buf = [0u8; READ_BUF_LEN];
         thread::spawn(move || {
             loop {
@@ -281,11 +286,14 @@ pub fn run_slot(
                                     ),
                                 }
                             }
-                            0x21 => switch_proto::set_report_mode_response(
-                                c,
-                                &NEUTRAL_INPUT,
-                                report[10],
-                            ),
+                            0x21 => {
+                                report_mode.store(report[11], Ordering::Relaxed);
+                                switch_proto::set_report_mode_response(
+                                    c,
+                                    &NEUTRAL_INPUT,
+                                    report[10],
+                                )
+                            }
                             _ => continue,
                         };
                         let mut guard = write_lock.lock().unwrap();
@@ -317,7 +325,7 @@ pub fn run_slot(
             latest = input;
         }
 
-        if input_active.load(Ordering::Relaxed) {
+        if input_active.load(Ordering::Relaxed) && report_mode.load(Ordering::Relaxed) == 0x30 {
             let c = count.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
             let report = switch_proto::input_report(c, &latest);
             let mut guard = write_lock.lock().unwrap();
