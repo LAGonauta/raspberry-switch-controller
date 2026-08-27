@@ -145,12 +145,14 @@ pub fn packet(ack: u8, cmd: u8, payload: &[u8]) -> Vec<u8> {
 /// Build a full `0x30` input report: `[0x30, count, input_buffer, pad]`.
 pub fn input_report(count: u8, input: &SwitchInput) -> Vec<u8> {
     let mut input_buffer = encode_input(input).to_vec();
-    // Append gyro (bytes 13..18) and accel (bytes 19..24) from the motion
-    // field. Without these, the Switch sees a zeroed IMU and ignores motion.
-    for v in input.motion.gyro {
+    // Append accel (bytes 13..18) and gyro (bytes 19..24) from the motion
+    // field. The Switch Pro Controller IMU block lists accel first, then gyro
+    // (see hid-nintendo's joycon_input_report_parse_imu_data). Without these,
+    // the Switch sees a zeroed IMU and ignores motion.
+    for v in input.motion.accel {
         input_buffer.extend_from_slice(&v.to_le_bytes());
     }
-    for v in input.motion.accel {
+    for v in input.motion.gyro {
         input_buffer.extend_from_slice(&v.to_le_bytes());
     }
     packet(0x30, count, &input_buffer)
