@@ -5,5 +5,7 @@ FROM mcr.microsoft.com/devcontainers/rust:2-1-trixie
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libudev-dev \
+        libclang-dev \
+        libbluetooth-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
