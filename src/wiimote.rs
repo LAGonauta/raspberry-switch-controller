@@ -101,10 +101,15 @@ fn run_device(
 
         let report = match device.lock().unwrap().read_timeout(50) {
             Ok(r) => r,
-            Err(_) => {
+            Err(wiimote_rs::prelude::WiimoteError::Disconnected) => {
                 warn!("Wiimote disconnected");
                 break;
             }
+            // `read_timeout` also returns an error on a plain timeout
+            // (MissingData), which is normal when `continuous: false` means an
+            // idle Wiimote sends no reports. Only a genuine disconnect is
+            // terminal; keep looping on everything else.
+            Err(_) => continue,
         };
 
         match report {
