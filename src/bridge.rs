@@ -6,7 +6,10 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use governor::{Quota, RateLimiter, clock::{self, Clock}};
+use governor::{
+    clock::{self, Clock},
+    Quota, RateLimiter,
+};
 
 use flume::{Receiver, Sender};
 use gilrs::{
@@ -15,20 +18,27 @@ use gilrs::{
     GamepadId, Gilrs,
 };
 
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 use crate::mapping::Mapping;
 use crate::models::{AppState, Controller, Rumble, SwitchInput, NEUTRAL_INPUT};
 
 const RUMBLE_MAX_MAGNITUDE: u16 = u16::MAX;
 
-fn effect_for_gamepad(id: GamepadId, gilrs: &mut Gilrs, magnitude: u16) -> Option<Effect> {
+struct RumbleEffects {
+    strong: Option<Effect>,
+    weak: Option<Effect>,
+    strong_mag: u16,
+    weak_mag: u16,
+}
+
+fn effect_for_gamepad(id: GamepadId, gilrs: &mut Gilrs, kind: BaseEffectType) -> Option<Effect> {
     if !gilrs.gamepad(id).is_ff_supported() {
         return None;
     }
     match EffectBuilder::new()
         .add_effect(BaseEffect {
-            kind: BaseEffectType::Strong { magnitude },
+            kind,
             ..Default::default()
         })
         .add_gamepad(&gilrs.gamepad(id))
@@ -64,8 +74,7 @@ pub fn run(
     let mapping = Mapping::new();
     let mut slot_occupied = vec![false; num_slots];
     let mut controllers: Vec<Controller> = Vec::new();
-    let mut effects: HashMap<GamepadId, Effect> = HashMap::new();
-    let mut effect_magnitude: HashMap<GamepadId, u16> = HashMap::new();
+    let mut rumble_effects: HashMap<GamepadId, RumbleEffects> = HashMap::new();
 
     // Attach any already-connected pads.
     for gamepad_id in gilrs.gamepads().map(|(id, _)| id).collect::<Vec<_>>() {
@@ -80,10 +89,26 @@ pub fn run(
                 id: gamepad_id,
                 slot,
             });
-            if let Some(effect) = effect_for_gamepad(gamepad_id, &mut gilrs, 0) {
-                effects.insert(gamepad_id, effect);
-                effect_magnitude.insert(gamepad_id, 0);
-            }
+            // Create both strong and weak effects for this gamepad.
+            let strong = effect_for_gamepad(
+                gamepad_id,
+                &mut gilrs,
+                BaseEffectType::Strong { magnitude: 0 },
+            );
+            let weak = effect_for_gamepad(
+                gamepad_id,
+                &mut gilrs,
+                BaseEffectType::Weak { magnitude: 0 },
+            );
+            rumble_effects.insert(
+                gamepad_id,
+                RumbleEffects {
+                    strong,
+                    weak,
+                    strong_mag: 0,
+                    weak_mag: 0,
+                },
+            );
         } else {
             warn!(
                 "{} not attached: no free slot",
@@ -94,8 +119,9 @@ pub fn run(
 
     let clock = clock::DefaultClock::default();
     let limiter = RateLimiter::direct_with_clock(
-        Quota::per_second(NonZeroU32::new(polling_rate).unwrap()).allow_burst(NonZeroU32::new(1u32).unwrap()),
-        &clock
+        Quota::per_second(NonZeroU32::new(polling_rate).unwrap())
+            .allow_burst(NonZeroU32::new(1u32).unwrap()),
+        &clock,
     );
 
     loop {
@@ -106,37 +132,73 @@ pub fn run(
         // Apply rumble from gadget slots.
         while let Ok(rumble) = rumble_rx.try_recv() {
             if let Some(controller) = controllers.iter().find(|c| c.slot == rumble.slot) {
-                let magnitude =
-                    (rumble.magnitude as u32 * RUMBLE_MAX_MAGNITUDE as u32 / 255) as u16;
-                if !effects.contains_key(&controller.id) {
-                    continue;
-                }
-                let needs_update = effect_magnitude.get(&controller.id).copied() != Some(magnitude);
-                if needs_update {
-                    // Stop and remove old effect if it exists
-                    if let Some(old) = effects.remove(&controller.id) {
-                        let _ = old.stop();
-                    }
-                    // Create new effect and update magnitude cache atomically
-                    match effect_for_gamepad(controller.id, &mut gilrs, magnitude) {
-                        Some(effect) => {
-                            effects.insert(controller.id, effect);
-                            effect_magnitude.insert(controller.id, magnitude);
+                if let Some(effects) = rumble_effects.get_mut(&controller.id) {
+                    // Map Switch left motor -> Xbox strong motor (low frequency, heavy)
+                    // Map Switch right motor -> Xbox weak motor (high frequency, light)
+                    let strong_mag =
+                        (rumble.left as u32 * RUMBLE_MAX_MAGNITUDE as u32 / 255) as u16;
+                    let weak_mag = (rumble.right as u32 * RUMBLE_MAX_MAGNITUDE as u32 / 255) as u16;
+
+                    // Update strong effect if changed
+                    if effects.strong_mag != strong_mag {
+                        if let Some(old) = effects.strong.take() {
+                            let _ = old.stop();
                         }
-                        None => {
-                            // Creation failed; forget the magnitude so a later
-                            // rumble event retries instead of being skipped.
-                            effect_magnitude.remove(&controller.id);
-                            continue;
+                        match effect_for_gamepad(
+                            controller.id,
+                            &mut gilrs,
+                            BaseEffectType::Strong {
+                                magnitude: strong_mag,
+                            },
+                        ) {
+                            Some(effect) => {
+                                effects.strong = Some(effect);
+                                effects.strong_mag = strong_mag;
+                            }
+                            None => {
+                                effects.strong_mag = 0;
+                                continue;
+                            }
                         }
                     }
-                }
-                // Play or stop the effect based on magnitude
-                if let Some(effect) = effects.get(&controller.id) {
-                    if magnitude > 0 {
-                        let _ = effect.play();
-                    } else {
-                        let _ = effect.stop();
+
+                    // Update weak effect if changed
+                    if effects.weak_mag != weak_mag {
+                        if let Some(old) = effects.weak.take() {
+                            let _ = old.stop();
+                        }
+                        match effect_for_gamepad(
+                            controller.id,
+                            &mut gilrs,
+                            BaseEffectType::Weak {
+                                magnitude: weak_mag,
+                            },
+                        ) {
+                            Some(effect) => {
+                                effects.weak = Some(effect);
+                                effects.weak_mag = weak_mag;
+                            }
+                            None => {
+                                effects.weak_mag = 0;
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Play or stop effects based on magnitude
+                    if let Some(ref effect) = effects.strong {
+                        if strong_mag > 0 {
+                            let _ = effect.play();
+                        } else {
+                            let _ = effect.stop();
+                        }
+                    }
+                    if let Some(ref effect) = effects.weak {
+                        if weak_mag > 0 {
+                            let _ = effect.play();
+                        } else {
+                            let _ = effect.stop();
+                        }
                     }
                 }
             }
@@ -158,10 +220,26 @@ pub fn run(
                             );
                             slot_occupied[slot] = true;
                             controllers.push(Controller { id: event.id, slot });
-                            if let Some(effect) = effect_for_gamepad(event.id, &mut gilrs, 0) {
-                                effects.insert(event.id, effect);
-                                effect_magnitude.insert(event.id, 0);
-                            }
+                            // Create both strong and weak effects for this gamepad.
+                            let strong = effect_for_gamepad(
+                                event.id,
+                                &mut gilrs,
+                                BaseEffectType::Strong { magnitude: 0 },
+                            );
+                            let weak = effect_for_gamepad(
+                                event.id,
+                                &mut gilrs,
+                                BaseEffectType::Weak { magnitude: 0 },
+                            );
+                            rumble_effects.insert(
+                                event.id,
+                                RumbleEffects {
+                                    strong,
+                                    weak,
+                                    strong_mag: 0,
+                                    weak_mag: 0,
+                                },
+                            );
                         }
                         None => warn!(
                             "{} connected but no free slot",
@@ -178,10 +256,14 @@ pub fn run(
                             controller.slot
                         );
                         slot_occupied[controller.slot] = false;
-                        if let Some(effect) = effects.remove(&event.id) {
-                            let _ = effect.stop();
+                        if let Some(mut effects) = rumble_effects.remove(&event.id) {
+                            if let Some(effect) = effects.strong.take() {
+                                let _ = effect.stop();
+                            }
+                            if let Some(effect) = effects.weak.take() {
+                                let _ = effect.stop();
+                            }
                         }
-                        effect_magnitude.remove(&event.id);
                     }
                 }
                 _ => {}

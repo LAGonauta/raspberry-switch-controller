@@ -10,7 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 use crate::gadget::GadgetManager;
 use crate::models::{AppState, SwitchInput, DEFAULT_SLOTS, MAX_SLOTS};
@@ -38,7 +38,7 @@ struct Cli {
 
 fn main() {
     pretty_env_logger::init();
-    
+
     let cli = Cli::parse();
 
     let num_slots = cli.controllers.clamp(MIN_SLOTS, MAX_SLOTS);
@@ -91,10 +91,7 @@ fn main() {
         slot_threads.push(thread::spawn(move || {
             // Set realtime priority for slot thread (USB gadget I/O).
             if let Err(e) = priority::set_realtime_priority(10) {
-                warn!(
-                    "[slot {}] Unable to set realtime priority: {}",
-                    slot, e
-                );
+                warn!("[slot {}] Unable to set realtime priority: {}", slot, e);
             }
             gadget::run_slot(slot, &path, rx, rumble_tx, tick, state);
         }));

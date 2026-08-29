@@ -72,8 +72,10 @@ pub const NEUTRAL_INPUT: SwitchInput = SwitchInput {
 #[derive(Clone, Copy, Debug)]
 pub struct Rumble {
     pub slot: usize,
-    /// Amplitude 0..255 (higher of HF/LF envelope).
-    pub magnitude: u8,
+    /// Left motor amplitude 0..255 (peak of HF/LF envelope).
+    pub left: u8,
+    /// Right motor amplitude 0..255 (peak of HF/LF envelope).
+    pub right: u8,
 }
 
 /// A live mapping from a physical Xbox gamepad to one Switch slot.
