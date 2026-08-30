@@ -54,6 +54,8 @@ impl Mapping {
                 -gamepad.value(Axis::RightStickY),
             ),
             motion: Default::default(),
+            // Battery will be set by bridge.rs after this call
+            battery: 0,
         }
     }
 

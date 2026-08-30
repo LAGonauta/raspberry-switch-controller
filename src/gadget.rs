@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use flume::{Receiver, Sender};
 
-use log::{warn, error};
+use log::{error, warn};
 
 use crate::models::{AppState, Rumble, SwitchInput, NEUTRAL_INPUT};
 use crate::switch_proto;
@@ -92,11 +92,7 @@ impl GadgetManager {
             let dev = PathBuf::from(format!("/dev/hidg{}", i));
             if dev.exists() {
                 if let Err(e) = fs::set_permissions(&dev, fs::Permissions::from_mode(0o666)) {
-                    warn!(
-                        "Unable to set permissions on {}: {}",
-                        dev.display(),
-                        e
-                    );
+                    warn!("Unable to set permissions on {}: {}", dev.display(), e);
                 }
             }
         }
@@ -198,6 +194,7 @@ pub fn run_slot(
             let _ = guard.write_all(&packet);
         }
     }
+    switch_proto::hdr_reset_slot(slot);
 
     let count = Arc::new(AtomicU8::new(0));
     let input_active = Arc::new(AtomicBool::new(true));
@@ -265,15 +262,14 @@ pub fn run_slot(
                                 slot,
                                 report[10],
                             ),
-                            0x03 | 0x04 | 0x08 | 0x11 | 0x12 | 0x30 | 0x33 | 0x38 | 0x40 | 0x41 | 0x48 => {
-                                switch_proto::subcommand_response(
-                                    c,
-                                    &NEUTRAL_INPUT,
-                                    true,
-                                    report[10],
-                                    &[],
-                                )
-                            }
+                            0x03 | 0x04 | 0x08 | 0x11 | 0x12 | 0x30 | 0x33 | 0x38 | 0x40 | 0x41
+                            | 0x48 => switch_proto::subcommand_response(
+                                c,
+                                &NEUTRAL_INPUT,
+                                true,
+                                report[10],
+                                &[],
+                            ),
                             0x10 => {
                                 match switch_proto::spi_read_response(c, &NEUTRAL_INPUT, report) {
                                     Some(resp) => resp,
@@ -301,11 +297,8 @@ pub fn run_slot(
                     }
                     // Rumble-only output report. (0x11 is MCU/NFC data, not rumble.)
                     0x10 => {
-                        if let Some(mag) = switch_proto::decode_rumble(report) {
-                            let _ = rumble_tx.try_send(Rumble {
-                                slot,
-                                magnitude: mag,
-                            });
+                        if let Some((left, right)) = switch_proto::decode_rumble(report, slot) {
+                            let _ = rumble_tx.try_send(Rumble { slot, left, right });
                         }
                     }
                     _ => {}

@@ -54,6 +54,9 @@ pub struct SwitchInput {
     pub right_stick: Stick,
 
     pub motion: Motion,
+    /// Battery level: bits [7:5] = capacity (0=empty .. 4=full),
+    /// bit 4 = charging, bit 0 = host_powered (USB).
+    pub battery: u8,
 }
 
 /// Neutral input report: centered sticks, no buttons pressed.
@@ -82,14 +85,17 @@ pub const NEUTRAL_INPUT: SwitchInput = SwitchInput {
         gyro: [0; 3],
         accel: [0; 3],
     },
+    battery: 0,
 };
 
 /// Rumble event raised by a gadget slot (from a Switch output report).
 #[derive(Clone, Copy, Debug)]
 pub struct Rumble {
     pub slot: usize,
-    /// Amplitude 0..255 (higher of HF/LF envelope).
-    pub magnitude: u8,
+    /// Left motor amplitude 0..255 (peak of HF/LF envelope).
+    pub left: u8,
+    /// Right motor amplitude 0..255 (peak of HF/LF envelope).
+    pub right: u8,
 }
 
 /// A live mapping from a physical Xbox gamepad to one Switch slot.

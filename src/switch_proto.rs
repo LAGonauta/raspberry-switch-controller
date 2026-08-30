@@ -155,7 +155,9 @@ pub fn input_report(count: u8, input: &SwitchInput) -> Vec<u8> {
     for v in input.motion.gyro {
         input_buffer.extend_from_slice(&v.to_le_bytes());
     }
-    packet(0x30, count, &input_buffer)
+    let mut report = packet(0x30, count, &input_buffer);
+    report[12] = input.battery; // battery/connection byte
+    report
 }
 
 /// The two handshake packets sent on connect (from `Connect()`).
@@ -210,178 +212,211 @@ pub fn simple_ack_response(cmd: u8) -> Vec<u8> {
 /// Maximum decoded rumble amplitude (hid-nintendo `joycon_max_rumble_amp`).
 const RUMBLE_AMP_MAX: u16 = 1003;
 
-/// Amplitude lookup table ported from hid-nintendo.c `joycon_rumble_amplitudes`
-/// (itself from dekuNukem's rumble_data_table.md). Entry = (hf_code, lf_code, amp)
-/// where hf_code is data byte 1 with the LSB masked off, lf_code is data byte 3
-/// plus bit 7 of data byte 2 shifted to bit 15, and amp is 0..=1003.
-const RUMBLE_AMPLITUDES: &[(u8, u16, u16)] = &[
-    (0x00, 0x0040, 0),
-    (0x02, 0x8040, 10),
-    (0x04, 0x0041, 12),
-    (0x06, 0x8041, 14),
-    (0x08, 0x0042, 17),
-    (0x0a, 0x8042, 20),
-    (0x0c, 0x0043, 24),
-    (0x0e, 0x8043, 28),
-    (0x10, 0x0044, 33),
-    (0x12, 0x8044, 40),
-    (0x14, 0x0045, 47),
-    (0x16, 0x8045, 56),
-    (0x18, 0x0046, 67),
-    (0x1a, 0x8046, 80),
-    (0x1c, 0x0047, 95),
-    (0x1e, 0x8047, 112),
-    (0x20, 0x0048, 117),
-    (0x22, 0x8048, 123),
-    (0x24, 0x0049, 128),
-    (0x26, 0x8049, 134),
-    (0x28, 0x004a, 140),
-    (0x2a, 0x804a, 146),
-    (0x2c, 0x004b, 152),
-    (0x2e, 0x804b, 159),
-    (0x30, 0x004c, 166),
-    (0x32, 0x804c, 173),
-    (0x34, 0x004d, 181),
-    (0x36, 0x804d, 189),
-    (0x38, 0x004e, 198),
-    (0x3a, 0x804e, 206),
-    (0x3c, 0x004f, 215),
-    (0x3e, 0x804f, 225),
-    (0x40, 0x0050, 230),
-    (0x42, 0x8050, 235),
-    (0x44, 0x0051, 240),
-    (0x46, 0x8051, 245),
-    (0x48, 0x0052, 251),
-    (0x4a, 0x8052, 256),
-    (0x4c, 0x0053, 262),
-    (0x4e, 0x8053, 268),
-    (0x50, 0x0054, 273),
-    (0x52, 0x8054, 279),
-    (0x54, 0x0055, 286),
-    (0x56, 0x8055, 292),
-    (0x58, 0x0056, 298),
-    (0x5a, 0x8056, 305),
-    (0x5c, 0x0057, 311),
-    (0x5e, 0x8057, 318),
-    (0x60, 0x0058, 325),
-    (0x62, 0x8058, 332),
-    (0x64, 0x0059, 340),
-    (0x66, 0x8059, 347),
-    (0x68, 0x005a, 355),
-    (0x6a, 0x805a, 362),
-    (0x6c, 0x005b, 370),
-    (0x6e, 0x805b, 378),
-    (0x70, 0x005c, 387),
-    (0x72, 0x805c, 395),
-    (0x74, 0x005d, 404),
-    (0x76, 0x805d, 413),
-    (0x78, 0x005e, 422),
-    (0x7a, 0x805e, 431),
-    (0x7c, 0x005f, 440),
-    (0x7e, 0x805f, 450),
-    (0x80, 0x0060, 460),
-    (0x82, 0x8060, 470),
-    (0x84, 0x0061, 480),
-    (0x86, 0x8061, 491),
-    (0x88, 0x0062, 501),
-    (0x8a, 0x8062, 512),
-    (0x8c, 0x0063, 524),
-    (0x8e, 0x8063, 535),
-    (0x90, 0x0064, 547),
-    (0x92, 0x8064, 559),
-    (0x94, 0x0065, 571),
-    (0x96, 0x8065, 584),
-    (0x98, 0x0066, 596),
-    (0x9a, 0x8066, 609),
-    (0x9c, 0x0067, 623),
-    (0x9e, 0x8067, 636),
-    (0xa0, 0x0068, 650),
-    (0xa2, 0x8068, 665),
-    (0xa4, 0x0069, 679),
-    (0xa6, 0x8069, 694),
-    (0xa8, 0x006a, 709),
-    (0xaa, 0x806a, 725),
-    (0xac, 0x006b, 741),
-    (0xae, 0x806b, 757),
-    (0xb0, 0x006c, 773),
-    (0xb2, 0x806c, 790),
-    (0xb4, 0x006d, 808),
-    (0xb6, 0x806d, 825),
-    (0xb8, 0x006e, 843),
-    (0xba, 0x806e, 862),
-    (0xbc, 0x006f, 881),
-    (0xbe, 0x806f, 900),
-    (0xc0, 0x0070, 920),
-    (0xc2, 0x8070, 940),
-    (0xc4, 0x0071, 960),
-    (0xc6, 0x8071, 981),
-    (0xc8, 0x0072, 1003),
-];
+/// Minimum log2 amplitude unit (-8.0 * 32 = -256).
+const HDR_AMP_MIN: i16 = -256;
+/// Off state (silence).
+const HDR_AMP_OFF: i16 = HDR_AMP_MIN;
 
-/// Look up the amplitude for an HF-band code (even byte).
-/// Uses direct index lookup since HF codes are even numbers 0x00..=0xc8.
-fn hf_amp(hf_code: u8) -> u16 {
-    // HF codes are even numbers from 0x00 to 0xc8 (101 entries)
-    // Index = hf_code / 2, clamped to valid range
-    let idx = (hf_code / 2) as usize;
-    if idx < RUMBLE_AMPLITUDES.len() {
-        RUMBLE_AMPLITUDES[idx].2
-    } else {
-        // Find closest match for out-of-range codes
-        RUMBLE_AMPLITUDES
-            .iter()
-            .min_by_key(|(h, _, _)| (*h as i16 - hf_code as i16).abs())
-            .map(|(_, _, amp)| *amp)
-            .unwrap_or(0)
-    }
+/// Per-motor running band amplitudes (low and high).
+#[derive(Clone, Copy)]
+struct HdrBands {
+    lo: i16, // low-band amplitude, 1/32 log2 units
+    hi: i16, // high-band amplitude
 }
 
-/// Look up the amplitude for an LF-band code (bit 15 + low byte).
-/// Uses HashMap for O(1) lookup instead of linear search.
-fn lf_amp(lf_code: u16) -> u16 {
-    use std::collections::HashMap;
-    use std::sync::OnceLock;
+/// Per-slot, per-motor (0=left, 1=right) state.
+/// Static mutable because each slot is handled by a single thread.
+static mut HDR_STATE: [[HdrBands; 2]; 8] = [[HdrBands {
+    lo: HDR_AMP_OFF,
+    hi: HDR_AMP_OFF,
+}; 2]; 8];
 
-    static LF_MAP: OnceLock<HashMap<u16, u16>> = OnceLock::new();
-    let map = LF_MAP.get_or_init(|| {
-        RUMBLE_AMPLITUDES
-            .iter()
-            .map(|(_, l, amp)| (*l, *amp))
-            .collect()
-    });
+/// Amplitude lookup table: log2 units (-256..0) -> linear amplitude (0..1003).
+/// Built once at startup.
+static HDR_LEVEL: std::sync::OnceLock<[u16; 257]> = std::sync::OnceLock::new();
 
-    map.get(&lf_code).copied().unwrap_or_else(|| {
-        // Find closest match for codes not in table
-        RUMBLE_AMPLITUDES
-            .iter()
-            .min_by_key(|(_, l, _)| (*l as i32 - lf_code as i32).abs())
-            .map(|(_, _, amp)| *amp)
-            .unwrap_or(0)
+fn hdr_build_levels() -> &'static [u16; 257] {
+    HDR_LEVEL.get_or_init(|| {
+        let mut table = [0u16; 257];
+        for (i, entry) in table.iter_mut().enumerate() {
+            let units = (i as i16) + HDR_AMP_MIN; // -256..0
+            let lin = (units as f32) / 32.0;
+            let amp = if lin >= -7.9375 { lin.exp2() } else { 0.0 };
+            let amp = amp.clamp(0.0, 1.0);
+            *entry = (amp * RUMBLE_AMP_MAX as f32).round() as u16;
+        }
+        table
     })
 }
 
-/// Decode one 4-byte rumble group into the louder of its HF/LF band
-/// amplitudes (0..=1003). Layout per dekuNukem: byte 0 = HF freq high,
-/// byte 1 = HF freq LSB (bit 0) + HF amp code (even), byte 2 = LF freq
-/// (bits 0-6) + LF amp code bit 15, byte 3 = LF amp code low byte.
-fn decode_rumble_group(group: &[u8]) -> u16 {
-    let hf_code = group[1] & 0xfe;
-    let lf_code = (((group[2] & 0x80) as u16) << 8) | group[3] as u16;
-    hf_amp(hf_code).max(lf_amp(lf_code))
+/// Absolute 7-bit amplitude code -> log2 units (1/32).
+/// Piecewise linear with slopes 1/4, 1/16, 1/32.
+fn hdr_amp7(code: u8) -> i16 {
+    match code {
+        0 => HDR_AMP_MIN,
+        1..=15 => (8 * code as i16) - 248,
+        16..=31 => (2 * code as i16) - 158,
+        _ => code as i16 - 127,
+    }
+}
+
+/// Apply a compact 5-bit command to the running amplitude.
+/// Returns new amplitude (clamped to [-256, 0]).
+fn hdr_amp5(code: u8, cur: i16) -> i16 {
+    let v = match code {
+        0 => HDR_AMP_OFF,
+        1..=11 => -16 * (code as i16 - 1), // presets 0..-5.0
+        17..=19 => cur + 4,                // step up +0.125
+        20..=22 => cur + 1,                // step up +0.03125
+        26..=28 => cur - 1,                // step down -0.03125
+        29..=31 => cur - 4,                // step down -0.125
+        _ => cur,                          // frequency-only command
+    };
+    v.clamp(HDR_AMP_MIN, 0)
+}
+
+/// Extract a bit-field from a 32-bit word.
+fn hdr_field(w: u32, shift: u8, width: u8) -> u8 {
+    ((w >> shift) & ((1u32 << width) - 1)) as u8
+}
+
+/// Decode one motor's 4 rumble bytes, advancing its state.
+/// Returns the peak linear amplitude (0..1003) across all updates in this frame.
+fn hdr_decode(slot: usize, motor: usize, bytes: &[u8; 4]) -> u16 {
+    let w = u32::from_le_bytes(*bytes);
+    let mode = hdr_field(w, 30, 2);
+    let state = unsafe { &mut HDR_STATE[slot][motor] };
+    let levels = hdr_build_levels();
+    let mut peak = 0u16;
+
+    macro_rules! sample {
+        ($amp:expr) => {
+            // Convert log2 units to linear amplitude.
+            let idx = ($amp - HDR_AMP_MIN) as usize;
+            let lvl = levels[idx];
+            if lvl > peak {
+                peak = lvl;
+            }
+        };
+    }
+
+    match mode {
+        0 => {
+            // Hold - no change.
+            sample!(state.lo);
+            sample!(state.hi);
+        }
+        1 => {
+            // Single 5-bit or 7-bit update, or 7-bit + two 5-bit burst.
+            if (w & 0xFFFFF) == 0 {
+                // Single 5-bit update for both bands.
+                state.lo = hdr_amp5(hdr_field(w, 25, 5), state.lo);
+                state.hi = hdr_amp5(hdr_field(w, 20, 5), state.hi);
+                sample!(state.lo);
+                sample!(state.hi);
+            } else if (w & 0x3) == 0 {
+                // Single 7-bit absolute for both bands.
+                state.lo = hdr_amp7(hdr_field(w, 23, 7));
+                state.hi = hdr_amp7(hdr_field(w, 9, 7));
+                sample!(state.lo);
+                sample!(state.hi);
+            } else {
+                // 7-bit for one band + two 5-bit updates.
+                let want_hi = (w & 1) != 0;
+                let is_freq = ((w >> 2) & 1) != 0;
+                if !is_freq {
+                    if want_hi {
+                        state.hi = hdr_amp7(hdr_field(w, 23, 7));
+                    } else {
+                        state.lo = hdr_amp7(hdr_field(w, 23, 7));
+                    }
+                }
+                sample!(state.lo);
+                sample!(state.hi);
+                // First 5-bit update pair.
+                state.lo = hdr_amp5(hdr_field(w, 18, 5), state.lo);
+                state.hi = hdr_amp5(hdr_field(w, 13, 5), state.hi);
+                sample!(state.lo);
+                sample!(state.hi);
+                // Second 5-bit update pair.
+                state.lo = hdr_amp5(hdr_field(w, 8, 5), state.lo);
+                state.hi = hdr_amp5(hdr_field(w, 3, 5), state.hi);
+                sample!(state.lo);
+                sample!(state.hi);
+            }
+        }
+        2 => {
+            // Two 5-bit updates, or 7-bit + 5-bit, then a 5-bit update.
+            if (w & 0x3FF) == 0 {
+                // Two 5-bit updates.
+                state.lo = hdr_amp5(hdr_field(w, 25, 5), state.lo);
+                state.hi = hdr_amp5(hdr_field(w, 20, 5), state.hi);
+                sample!(state.lo);
+                sample!(state.hi);
+                state.lo = hdr_amp5(hdr_field(w, 15, 5), state.lo);
+                state.hi = hdr_amp5(hdr_field(w, 10, 5), state.hi);
+                sample!(state.lo);
+                sample!(state.hi);
+            } else {
+                // 7-bit + 5-bit, then a 5-bit update.
+                if (w & 1) != 0 {
+                    state.hi = hdr_amp7(hdr_field(w, 23, 7));
+                    state.lo = hdr_amp5(hdr_field(w, 18, 5), state.lo);
+                } else {
+                    state.lo = hdr_amp7(hdr_field(w, 23, 7));
+                    state.hi = hdr_amp5(hdr_field(w, 18, 5), state.hi);
+                }
+                sample!(state.lo);
+                sample!(state.hi);
+                state.lo = hdr_amp5(hdr_field(w, 13, 5), state.lo);
+                state.hi = hdr_amp5(hdr_field(w, 8, 5), state.hi);
+                sample!(state.lo);
+                sample!(state.hi);
+            }
+        }
+        3 => {
+            // Three 5-bit updates.
+            state.lo = hdr_amp5(hdr_field(w, 25, 5), state.lo);
+            state.hi = hdr_amp5(hdr_field(w, 20, 5), state.hi);
+            sample!(state.lo);
+            sample!(state.hi);
+            state.lo = hdr_amp5(hdr_field(w, 15, 5), state.lo);
+            state.hi = hdr_amp5(hdr_field(w, 10, 5), state.hi);
+            sample!(state.lo);
+            sample!(state.hi);
+            state.lo = hdr_amp5(hdr_field(w, 5, 5), state.lo);
+            state.hi = hdr_amp5(hdr_field(w, 0, 5), state.hi);
+            sample!(state.lo);
+            sample!(state.hi);
+        }
+        _ => unreachable!(),
+    }
+    peak
+}
+
+/// Reset rumble state for a slot (call on disconnect).
+pub fn hdr_reset_slot(slot: usize) {
+    unsafe {
+        HDR_STATE[slot] = [HdrBands {
+            lo: HDR_AMP_OFF,
+            hi: HDR_AMP_OFF,
+        }; 2];
+    }
 }
 
 /// Decode the 8-byte rumble payload of a `0x10` (rumble-only) output report
-/// into an amplitude 0..=255 (loudest band of either actuator). Layout per
+/// into left/right amplitudes 0..=255. Layout per
 /// hid-nintendo `struct joycon_rumble_output`: [0] = report id,
 /// [1] = packet counter, [2..6] = left actuator, [6..10] = right actuator.
-pub fn decode_rumble(report: &[u8]) -> Option<u8> {
+pub fn decode_rumble(report: &[u8], slot: usize) -> Option<(u8, u8)> {
     if report.len() < 10 || report[0] != 0x10 {
         return None;
     }
-    let left = decode_rumble_group(&report[2..6]);
-    let right = decode_rumble_group(&report[6..10]);
-    let amp = left.max(right) as u32;
-    Some((amp * 255 / RUMBLE_AMP_MAX as u32) as u8)
+    let left = hdr_decode(slot, 0, report[2..6].try_into().unwrap());
+    let right = hdr_decode(slot, 1, report[6..10].try_into().unwrap());
+    let left_mag = (left as u32 * 255 / RUMBLE_AMP_MAX as u32) as u8;
+    let right_mag = (right as u32 * 255 / RUMBLE_AMP_MAX as u32) as u8;
+    Some((left_mag, right_mag))
 }
 
 /// Response for subcommand `0x21` (set report mode).
