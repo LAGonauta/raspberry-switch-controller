@@ -274,17 +274,25 @@ pub fn run(
                 }
                 UiCommand::Identify { controller_id } => {
                     if let Some(effects) = rumble_effects.get_mut(&controller_id) {
-                        // Send a quick vibration pattern: two short pulses
-                        if let Some(ref effect) = effects.strong {
-                            let _ = effect.play();
-                            thread::sleep(Duration::from_millis(100));
-                            let _ = effect.stop();
-                            thread::sleep(Duration::from_millis(100));
-                            let _ = effect.play();
-                            thread::sleep(Duration::from_millis(100));
-                            let _ = effect.stop();
-                        }
-                        let _ = ui_event_tx.send(UiEvent::VibrationComplete { id: controller_id });
+                        // Spawn a separate thread for vibration to avoid blocking input polling
+                        let strong_effect = effects.strong.take();
+                        let ui_event_tx = ui_event_tx.clone();
+
+                        thread::spawn(move || {
+                            // Send a quick vibration pattern: two short pulses
+                            if let Some(effect) = strong_effect {
+                                let _ = effect.play();
+                                thread::sleep(Duration::from_millis(100));
+                                let _ = effect.stop();
+                                thread::sleep(Duration::from_millis(100));
+                                let _ = effect.play();
+                                thread::sleep(Duration::from_millis(100));
+                                let _ = effect.stop();
+                                // Note: effect is dropped here, which stops it
+                            }
+                            let _ =
+                                ui_event_tx.send(UiEvent::VibrationComplete { id: controller_id });
+                        });
                     }
                 }
                 UiCommand::Vibrate {
@@ -292,12 +300,20 @@ pub fn run(
                     duration_ms,
                 } => {
                     if let Some(effects) = rumble_effects.get_mut(&controller_id) {
-                        if let Some(ref effect) = effects.strong {
-                            let _ = effect.play();
-                            thread::sleep(Duration::from_millis(duration_ms));
-                            let _ = effect.stop();
-                        }
-                        let _ = ui_event_tx.send(UiEvent::VibrationComplete { id: controller_id });
+                        // Spawn a separate thread for vibration to avoid blocking input polling
+                        let strong_effect = effects.strong.take();
+                        let ui_event_tx = ui_event_tx.clone();
+
+                        thread::spawn(move || {
+                            if let Some(effect) = strong_effect {
+                                let _ = effect.play();
+                                thread::sleep(Duration::from_millis(duration_ms));
+                                let _ = effect.stop();
+                                // Note: effect is dropped here, which stops it
+                            }
+                            let _ =
+                                ui_event_tx.send(UiEvent::VibrationComplete { id: controller_id });
+                        });
                     }
                 }
             }

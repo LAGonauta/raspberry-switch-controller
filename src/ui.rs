@@ -129,6 +129,13 @@ impl UiState {
                 slot: Some(slot),
                 is_vibrating: false,
             });
+
+            // Also update the controller's slot field in the controllers vector
+            if let Some(id) = controller_id {
+                if let Some(controller) = self.controllers.iter_mut().find(|c| c.id == id) {
+                    controller.slot = Some(slot);
+                }
+            }
         }
     }
 
