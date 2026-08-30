@@ -16,13 +16,47 @@ use flume::{Receiver, Sender};
 use gilrs::{
     ff::Effect,
     ff::{BaseEffect, BaseEffectType, EffectBuilder},
-    GamepadId, Gilrs,
+    GamepadId, Gilrs, PowerInfo,
 };
 
 use log::{error, info, warn};
 
 use crate::mapping::Mapping;
 use crate::models::{AppState, Controller, Rumble, SwitchInput, NEUTRAL_INPUT};
+
+/// Convert battery percentage (0-100) to Switch 5-level scale (0-4).
+fn percentage_to_level(pct: u8) -> u8 {
+    if pct >= 70 {
+        4 // full
+    } else if pct >= 50 {
+        3 // medium
+    } else if pct >= 30 {
+        2 // low
+    } else if pct >= 10 {
+        1 // critical
+    } else {
+        0 // empty
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_percentage_to_level() {
+        assert_eq!(percentage_to_level(0), 0);
+        assert_eq!(percentage_to_level(9), 0);
+        assert_eq!(percentage_to_level(10), 1);
+        assert_eq!(percentage_to_level(29), 1);
+        assert_eq!(percentage_to_level(30), 2);
+        assert_eq!(percentage_to_level(49), 2);
+        assert_eq!(percentage_to_level(50), 3);
+        assert_eq!(percentage_to_level(69), 3);
+        assert_eq!(percentage_to_level(70), 4);
+        assert_eq!(percentage_to_level(100), 4);
+    }
+}
 use crate::ui::{UiCommand, UiEvent};
 
 const RUMBLE_MAX_MAGNITUDE: u16 = u16::MAX;
@@ -405,7 +439,19 @@ pub fn run(
         // Poll and send per slot (idle slots send neutral reports).
         for (slot, tx) in input_tx.iter().enumerate().take(num_slots) {
             let input = match controllers.iter().find(|c| c.slot == slot) {
-                Some(controller) => mapping.poll(&gilrs.gamepad(controller.id)),
+                Some(controller) => {
+                    let gamepad = gilrs.gamepad(controller.id);
+                    let mut inp = mapping.poll(&gamepad);
+                    // Set battery level from controller's power info
+                    inp.battery = match gamepad.power_info() {
+                        PowerInfo::Discharging(pct) => percentage_to_level(pct) << 5,
+                        PowerInfo::Charging(pct) => (percentage_to_level(pct) << 5) | 0x10,
+                        PowerInfo::Charged => (4 << 5) | 0x10, // full + charging
+                        PowerInfo::Wired => 0x01,              // USB powered
+                        _ => 0,                                // unknown/empty
+                    };
+                    inp
+                }
                 None => NEUTRAL_INPUT,
             };
             let _ = tx.send(input);

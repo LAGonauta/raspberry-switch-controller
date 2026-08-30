@@ -53,6 +53,8 @@ impl Mapping {
                 gamepad.value(Axis::RightStickX),
                 -gamepad.value(Axis::RightStickY),
             ),
+            // Battery will be set by bridge.rs after this call
+            battery: 0,
         }
     }
 

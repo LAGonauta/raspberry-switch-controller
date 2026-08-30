@@ -145,7 +145,9 @@ pub fn packet(ack: u8, cmd: u8, payload: &[u8]) -> Vec<u8> {
 /// Build a full `0x30` input report: `[0x30, count, input_buffer, pad]`.
 pub fn input_report(count: u8, input: &SwitchInput) -> Vec<u8> {
     let input_buffer = encode_input(input);
-    packet(0x30, count, &input_buffer)
+    let mut report = packet(0x30, count, &input_buffer);
+    report[12] = input.battery; // battery/connection byte
+    report
 }
 
 /// The two handshake packets sent on connect (from `Connect()`).

@@ -42,6 +42,10 @@ pub struct SwitchInput {
 
     pub left_stick: Stick,
     pub right_stick: Stick,
+
+    /// Battery level: bits [7:5] = capacity (0=empty .. 4=full),
+    /// bit 4 = charging, bit 0 = host_powered (USB).
+    pub battery: u8,
 }
 
 /// Neutral input report: centered sticks, no buttons pressed.
@@ -66,6 +70,7 @@ pub const NEUTRAL_INPUT: SwitchInput = SwitchInput {
     right_stick_press: false,
     left_stick: Stick::new(0.0, 0.0),
     right_stick: Stick::new(0.0, 0.0),
+    battery: 0,
 };
 
 /// Rumble event raised by a gadget slot (from a Switch output report).
