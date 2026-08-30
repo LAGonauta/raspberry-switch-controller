@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use governor::{
     clock::{self, Clock},
@@ -22,6 +23,7 @@ use log::{error, info, warn};
 
 use crate::mapping::Mapping;
 use crate::models::{AppState, Controller, Rumble, SwitchInput, NEUTRAL_INPUT};
+use crate::ui::{UiCommand, UiEvent};
 
 const RUMBLE_MAX_MAGNITUDE: u16 = u16::MAX;
 
@@ -62,6 +64,8 @@ pub fn run(
     rumble_rx: Receiver<Rumble>,
     polling_rate: u32,
     state: Arc<Mutex<AppState>>,
+    ui_command_rx: Receiver<UiCommand>,
+    ui_event_tx: Sender<UiEvent>,
 ) {
     let mut gilrs = match Gilrs::new() {
         Ok(g) => g,
@@ -204,6 +208,101 @@ pub fn run(
             }
         }
 
+        // Handle UI commands.
+        while let Ok(cmd) = ui_command_rx.try_recv() {
+            match cmd {
+                UiCommand::Remap {
+                    controller_id,
+                    new_slot,
+                } => {
+                    if new_slot >= num_slots {
+                        warn!("Invalid slot {} for remap", new_slot);
+                        continue;
+                    }
+                    // Find the controller
+                    if let Some(controller) = controllers.iter().find(|c| c.id == controller_id) {
+                        let old_slot = controller.slot;
+                        if old_slot == new_slot {
+                            continue;
+                        }
+                        // Check if new slot is occupied
+                        if slot_occupied[new_slot] {
+                            // Find what's in the new slot and swap
+                            if let Some(other) = controllers.iter_mut().find(|c| c.slot == new_slot)
+                            {
+                                other.slot = old_slot;
+                                slot_occupied[old_slot] = true;
+                                info!(
+                                    "Swapped slots: {} (slot {}) <-> {} (slot {})",
+                                    gilrs.gamepad(controller_id).name(),
+                                    new_slot,
+                                    gilrs.gamepad(other.id).name(),
+                                    old_slot
+                                );
+                                // Update UI
+                                let _ = ui_event_tx.send(UiEvent::SlotUpdated {
+                                    slot: old_slot,
+                                    controller_id: Some(other.id),
+                                    controller_name: Some(
+                                        gilrs.gamepad(other.id).name().to_string(),
+                                    ),
+                                });
+                            }
+                        } else {
+                            slot_occupied[old_slot] = false;
+                            slot_occupied[new_slot] = true;
+                            info!(
+                                "Remapped {} from slot {} to slot {}",
+                                gilrs.gamepad(controller_id).name(),
+                                old_slot,
+                                new_slot
+                            );
+                        }
+                        // Update the controller's slot
+                        if let Some(controller) =
+                            controllers.iter_mut().find(|c| c.id == controller_id)
+                        {
+                            controller.slot = new_slot;
+                        }
+                        // Update UI
+                        let _ = ui_event_tx.send(UiEvent::SlotUpdated {
+                            slot: new_slot,
+                            controller_id: Some(controller_id),
+                            controller_name: Some(gilrs.gamepad(controller_id).name().to_string()),
+                        });
+                    }
+                }
+                UiCommand::Identify { controller_id } => {
+                    if let Some(effects) = rumble_effects.get_mut(&controller_id) {
+                        // Send a quick vibration pattern: two short pulses
+                        if let Some(ref effect) = effects.strong {
+                            let _ = effect.play();
+                            thread::sleep(Duration::from_millis(100));
+                            let _ = effect.stop();
+                            thread::sleep(Duration::from_millis(100));
+                            let _ = effect.play();
+                            thread::sleep(Duration::from_millis(100));
+                            let _ = effect.stop();
+                        }
+                        let _ = ui_event_tx.send(UiEvent::VibrationComplete { id: controller_id });
+                    }
+                }
+                UiCommand::Vibrate {
+                    controller_id,
+                    duration_ms,
+                } => {
+                    if let Some(effects) = rumble_effects.get_mut(&controller_id) {
+                        if let Some(ref effect) = effects.strong {
+                            let _ = effect.play();
+                            thread::sleep(Duration::from_millis(duration_ms));
+                            let _ = effect.stop();
+                        }
+                        let _ = ui_event_tx.send(UiEvent::VibrationComplete { id: controller_id });
+                    }
+                }
+            }
+        }
+
         // Handle gamepad connect/disconnect events.
         while let Some(event) = gilrs.next_event() {
             match event.event {
@@ -240,6 +339,16 @@ pub fn run(
                                     weak_mag: 0,
                                 },
                             );
+                            // Notify UI
+                            let _ = ui_event_tx.send(UiEvent::ControllerConnected {
+                                id: event.id,
+                                name: gilrs.gamepad(event.id).name().to_string(),
+                            });
+                            let _ = ui_event_tx.send(UiEvent::SlotUpdated {
+                                slot,
+                                controller_id: Some(event.id),
+                                controller_name: Some(gilrs.gamepad(event.id).name().to_string()),
+                            });
                         }
                         None => warn!(
                             "{} connected but no free slot",
@@ -264,6 +373,13 @@ pub fn run(
                                 let _ = effect.stop();
                             }
                         }
+                        // Notify UI
+                        let _ = ui_event_tx.send(UiEvent::ControllerDisconnected { id: event.id });
+                        let _ = ui_event_tx.send(UiEvent::SlotUpdated {
+                            slot: controller.slot,
+                            controller_id: None,
+                            controller_name: None,
+                        });
                     }
                 }
                 _ => {}

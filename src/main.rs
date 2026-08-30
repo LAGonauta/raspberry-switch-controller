@@ -4,6 +4,7 @@ mod mapping;
 mod models;
 mod priority;
 mod switch_proto;
+mod ui;
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -97,6 +98,10 @@ fn main() {
         }));
     }
 
+    // Create UI channels.
+    let (ui_command_tx, ui_command_rx) = flume::unbounded::<ui::UiCommand>();
+    let (ui_event_tx, ui_event_rx) = flume::unbounded::<ui::UiEvent>();
+
     // Spawn the gilrs bridge with realtime priority.
     let bridge_state = state.clone();
     let bridge_thread = thread::spawn(move || {
@@ -104,7 +109,21 @@ fn main() {
         if let Err(e) = priority::set_realtime_priority(10) {
             warn!("Unable to set realtime priority for bridge: {}", e);
         }
-        bridge::run(num_slots, input_tx, rumble_rx, polling_rate, bridge_state);
+        bridge::run(
+            num_slots,
+            input_tx,
+            rumble_rx,
+            polling_rate,
+            bridge_state,
+            ui_command_rx,
+            ui_event_tx,
+        );
+    });
+
+    // Spawn the terminal UI.
+    let ui_state = state.clone();
+    let ui_thread = thread::spawn(move || {
+        ui::run_ui(num_slots, ui_command_tx, ui_event_rx, ui_state);
     });
 
     // Wait for Ctrl-C.
@@ -120,6 +139,7 @@ fn main() {
     *state.lock().unwrap() = AppState::Exiting;
 
     let _ = bridge_thread.join();
+    let _ = ui_thread.join();
     for handle in slot_threads {
         let _ = handle.join();
     }
