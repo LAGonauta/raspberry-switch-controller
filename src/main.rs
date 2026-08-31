@@ -133,8 +133,9 @@ fn main() {
 
     // Spawn the terminal UI.
     let ui_state = state.clone();
+    let ui_command_tx_clone = ui_command_tx.clone();
     let ui_thread = thread::spawn(move || {
-        ui::run_ui(num_slots, ui_command_tx, ui_event_rx, ui_state);
+        ui::run_ui(num_slots, ui_command_tx_clone, ui_event_rx, ui_state);
     });
 
     // Spawn the Wiimote motion reader, if enabled.
@@ -151,6 +152,9 @@ fn main() {
             info!("Wiimote motion enabled for slot {}", slot);
             if let Err(e) = bridge::set_motion_slot(slot, motion_handle) {
                 error!("Unable to attach Wiimote motion: {}", e);
+            } else {
+                // Notify UI of initial motion slot.
+                let _ = ui_command_tx.send(ui::UiCommand::SetMotionSlot { slot });
             }
         }
     }

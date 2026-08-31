@@ -35,6 +35,8 @@ pub enum UiCommand {
         controller_id: GamepadId,
         duration_ms: u64,
     },
+    /// Set which slot receives Wiimote motion.
+    SetMotionSlot { slot: usize },
 }
 
 /// Events sent from bridge thread to UI.
@@ -52,6 +54,8 @@ pub enum UiEvent {
     },
     /// Vibration completed.
     VibrationComplete { id: GamepadId },
+    /// Motion slot changed.
+    MotionSlotUpdated { slot: usize },
 }
 
 /// Information about a connected controller.
@@ -70,6 +74,9 @@ pub struct UiState {
     pub selected_index: usize,
     pub show_remap_dialog: bool,
     pub selected_slot_for_remap: usize,
+    pub show_motion_dialog: bool,
+    pub selected_slot_for_motion: usize,
+    pub motion_slot: Option<usize>,
     pub status_message: String,
     pub should_quit: bool,
 }
@@ -82,6 +89,9 @@ impl UiState {
             selected_index: 0,
             show_remap_dialog: false,
             selected_slot_for_remap: 0,
+            show_motion_dialog: false,
+            selected_slot_for_motion: 0,
+            motion_slot: None,
             status_message: "Ready".to_string(),
             should_quit: false,
         }
@@ -188,6 +198,9 @@ pub fn run_ui(
                         controller.is_vibrating = false;
                     }
                 }
+                UiEvent::MotionSlotUpdated { slot } => {
+                    ui_state.motion_slot = Some(slot);
+                }
             }
         }
 
@@ -262,6 +275,35 @@ fn handle_key_event(
             }
             _ => {}
         }
+    } else if state.show_motion_dialog {
+        // Handle motion slot dialog
+        match key {
+            KeyCode::Esc => {
+                state.show_motion_dialog = false;
+                state.status_message = "Motion assignment cancelled".to_string();
+            }
+            KeyCode::Up => {
+                state.selected_slot_for_motion = state.selected_slot_for_motion.saturating_add(1);
+            }
+            KeyCode::Down => {
+                state.selected_slot_for_motion = state
+                    .selected_slot_for_motion
+                    .saturating_sub(1)
+                    .min(num_slots - 1);
+            }
+            KeyCode::Enter => {
+                let _ = command_tx.send(UiCommand::SetMotionSlot {
+                    slot: state.selected_slot_for_motion,
+                });
+                state.motion_slot = Some(state.selected_slot_for_motion);
+                state.status_message = format!(
+                    "Wiimote motion assigned to slot {}",
+                    state.selected_slot_for_motion + 1
+                );
+                state.show_motion_dialog = false;
+            }
+            _ => {}
+        }
     } else {
         // Handle main UI
         match key {
@@ -295,6 +337,13 @@ fn handle_key_event(
                 state.selected_slot_for_remap = 0;
                 state.status_message =
                     "Select slot (↑/↓, Enter to confirm, Esc to cancel)".to_string();
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                state.show_motion_dialog = true;
+                state.selected_slot_for_motion = state.motion_slot.unwrap_or(0);
+                state.status_message =
+                    "Select slot for Wiimote motion (↑/↓, Enter to confirm, Esc to cancel)"
+                        .to_string();
             }
             _ => {}
         }
@@ -379,7 +428,7 @@ fn draw_ui(f: &mut Frame, state: &UiState, list_state: &mut ListState) {
         .iter()
         .enumerate()
         .map(|(i, assignment)| {
-            let (text, style) = match assignment {
+            let (mut text, style) = match assignment {
                 Some(controller) => (
                     format!(
                         "Slot {}: {} (ID: {:?})",
@@ -394,6 +443,9 @@ fn draw_ui(f: &mut Frame, state: &UiState, list_state: &mut ListState) {
                     Style::default().fg(Color::DarkGray),
                 ),
             };
+            if state.motion_slot == Some(i) {
+                text.push_str(" [MOTION]");
+            }
             ListItem::new(Line::from(Span::styled(text, style)))
         })
         .collect();
@@ -411,9 +463,14 @@ fn draw_ui(f: &mut Frame, state: &UiState, list_state: &mut ListState) {
             "Remap Mode: Use ↑/↓ to select slot, Enter to confirm, Esc to cancel | {}",
             state.status_message
         )
+    } else if state.show_motion_dialog {
+        format!(
+            "Motion Slot: Use ↑/↓ to select slot, Enter to confirm, Esc to cancel | {}",
+            state.status_message
+        )
     } else {
         format!(
-            "[V] Vibrate | [R] Remap | [↑/↓] Navigate | [Q] Quit | {}",
+            "[V] Vibrate | [R] Remap | [M] Motion | [↑/↓] Navigate | [Q] Quit | {}",
             state.status_message
         )
     };

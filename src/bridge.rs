@@ -24,6 +24,7 @@ use log::{error, info, warn};
 use crate::mapping::Mapping;
 use crate::models::{AppState, Controller, Rumble, SwitchInput, NEUTRAL_INPUT};
 use crate::motion;
+use crate::ui::{UiCommand, UiEvent};
 use crate::wiimote::MotionHandle;
 
 /// Slot that receives Wiimote motion, if any.
@@ -39,6 +40,11 @@ pub fn set_motion_slot(slot: usize, handle: MotionHandle) -> Result<(), &'static
     }
     MOTION_SLOT.store(slot, std::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+
+/// Update which slot receives Wiimote motion (without changing the handle).
+pub fn update_motion_slot(slot: usize) {
+    MOTION_SLOT.store(slot, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Convert battery percentage (0-100) to Switch 5-level scale (0-4).
@@ -74,7 +80,6 @@ mod tests {
         assert_eq!(percentage_to_level(100), 4);
     }
 }
-use crate::ui::{UiCommand, UiEvent};
 
 const RUMBLE_MAX_MAGNITUDE: u16 = u16::MAX;
 
@@ -366,6 +371,15 @@ pub fn run(
                                 ui_event_tx.send(UiEvent::VibrationComplete { id: controller_id });
                         });
                     }
+                }
+                UiCommand::SetMotionSlot { slot } => {
+                    if slot >= num_slots {
+                        warn!("Invalid slot {} for motion slot", slot);
+                        continue;
+                    }
+                    update_motion_slot(slot);
+                    info!("Wiimote motion assigned to slot {}", slot);
+                    let _ = ui_event_tx.send(UiEvent::MotionSlotUpdated { slot });
                 }
             }
         }
