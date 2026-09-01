@@ -73,7 +73,7 @@ No tests found in the codebase. Verification requires hardware.
 1. **Root required**: USB gadget creation writes to `/sys/kernel/config/usb_gadget`
 2. **Hardware dependent**: Cannot test without Pi 4 + Switch + Xbox dongle
 3. **xone driver**: Must be installed for Xbox wireless dongle support
-4. **Pi setup**: Enable OTG (`dtoverlay=dwc2` in `/boot/firmware/config.txt`, add `dwc2` + `libcomposite` to `/etc/modules`)
+4. **Pi setup**: Enable OTG (`dtoverlay=dwc2` in `/boot/firmware/config.txt`, create `/etc/modules-load.d/usb-gadget.conf` with `dwc2` and `libcomposite`)
 
 ## Reference Implementations
 

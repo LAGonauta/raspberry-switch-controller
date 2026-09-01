@@ -125,8 +125,7 @@ Create once at startup:
 
 ## 9. Prerequisites (Pi 4 setup)
 
-- Enable OTG: `dtoverlay=dwc2` in `/boot/firmware/config.txt`, `dwc2` +
-  `libcomposite` in `/etc/modules`, reboot.
+- Enable OTG: `dtoverlay=dwc2` in `/boot/firmware/config.txt`, create `/etc/modules-load.d/usb-gadget.conf` with `dwc2` and `libcomposite`, reboot.
 - Install **xone** kernel driver (medusalix) for the official Xbox wireless
   dongle; pair controllers. Verify they appear as gamepads.
 - Rust toolchain; cross-compile via `Cross.toml` (uses pre-build dependencies for aarch64) or

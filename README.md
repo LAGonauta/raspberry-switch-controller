@@ -35,7 +35,11 @@ This project turns a Raspberry Pi 4 into a USB adapter that allows multiple Xbox
 
 1. **Enable USB OTG**:
    - Add `dtoverlay=dwc2` to `/boot/firmware/config.txt`
-   - Add `dwc2` and `libcomposite` to `/etc/modules`
+   - Create `/etc/modules-load.d/usb-gadget.conf` with contents:
+     ```
+     dwc2
+     libcomposite
+     ```
    - Reboot the Pi
 
 2. **Install xone driver**:
