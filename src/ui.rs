@@ -251,13 +251,13 @@ fn handle_key_event(
                 state.status_message = "Remap cancelled".to_string();
             }
             KeyCode::Up => {
-                state.selected_slot_for_remap = state.selected_slot_for_remap.saturating_add(1);
-            }
-            KeyCode::Down => {
                 state.selected_slot_for_remap = state
                     .selected_slot_for_remap
-                    .saturating_sub(1)
+                    .saturating_add(1)
                     .min(num_slots - 1);
+            }
+            KeyCode::Down => {
+                state.selected_slot_for_remap = state.selected_slot_for_remap.saturating_sub(1);
             }
             KeyCode::Enter => {
                 if let Some(controller) = state.selected_controller() {
@@ -283,13 +283,13 @@ fn handle_key_event(
                 state.status_message = "Motion assignment cancelled".to_string();
             }
             KeyCode::Up => {
-                state.selected_slot_for_motion = state.selected_slot_for_motion.saturating_add(1);
-            }
-            KeyCode::Down => {
                 state.selected_slot_for_motion = state
                     .selected_slot_for_motion
-                    .saturating_sub(1)
+                    .saturating_add(1)
                     .min(num_slots - 1);
+            }
+            KeyCode::Down => {
+                state.selected_slot_for_motion = state.selected_slot_for_motion.saturating_sub(1);
             }
             KeyCode::Enter => {
                 let _ = command_tx.send(UiCommand::SetMotionSlot {
