@@ -4,8 +4,9 @@ mod mapping;
 mod models;
 mod priority;
 mod switch_proto;
-mod ui;
+mod web;
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use clap::Parser;
 use log::{error, info, warn};
 
 use crate::gadget::GadgetManager;
-use crate::models::{AppState, SwitchInput, DEFAULT_SLOTS, MAX_SLOTS};
+use crate::models::{AppState, Command, SwitchInput, WebState, DEFAULT_SLOTS, MAX_SLOTS};
 
 const MIN_SLOTS: usize = 1;
 const MIN_POLLING_RATE: u32 = 20;
@@ -35,6 +36,18 @@ struct Cli {
     /// Polling rate in Hz (20..1000).
     #[arg(long, short = 'p', default_value_t = DEFAULT_POLLING_RATE)]
     polling_rate: u32,
+
+    /// Web UI listen address (e.g. 0.0.0.0:8080).
+    #[arg(long, default_value = "0.0.0.0:8080")]
+    web_addr: String,
+
+    /// Disable the web UI.
+    #[arg(long)]
+    no_web: bool,
+
+    /// Skip USB gadget creation/teardown (for UI development without hardware).
+    #[arg(long)]
+    no_gadget: bool,
 }
 
 fn main() {
@@ -57,18 +70,32 @@ fn main() {
         );
     }
 
+    let web_addr: SocketAddr = match cli.web_addr.parse() {
+        Ok(addr) => addr,
+        Err(e) => {
+            error!("Invalid --web-addr '{}': {}", cli.web_addr, e);
+            std::process::exit(1);
+        }
+    };
+
     let state = Arc::new(Mutex::new(AppState::Connected));
 
     // Create the composite USB gadget with N HID functions.
-    let manager = GadgetManager::new();
-    if let Err(e) = manager.create(num_slots) {
-        error!("Unable to create USB gadget (run as root?): {}", e);
-        std::process::exit(1);
-    }
-    info!(
-        "USB gadget created with {} Pro Controller slot(s) ({} Hz)",
-        num_slots, polling_rate
-    );
+    let manager = if cli.no_gadget {
+        info!("--no-gadget set: skipping USB gadget creation");
+        None
+    } else {
+        let manager = GadgetManager::new();
+        if let Err(e) = manager.create(num_slots) {
+            error!("Unable to create USB gadget (run as root?): {}", e);
+            std::process::exit(1);
+        }
+        info!(
+            "USB gadget created with {} Pro Controller slot(s) ({} Hz)",
+            num_slots, polling_rate
+        );
+        Some(manager)
+    };
 
     // Per-slot input channels (bridge -> gadget) and a shared rumble channel.
     let mut input_tx = Vec::with_capacity(num_slots);
@@ -84,26 +111,32 @@ fn main() {
 
     // Spawn one task per slot with realtime priority.
     let mut slot_threads = Vec::with_capacity(num_slots);
-    for slot in 0..num_slots {
-        let rx = input_rx.remove(0);
-        let rumble_tx = rumble_tx.clone();
-        let state = state.clone();
-        let path = manager.hidg_path(slot);
-        slot_threads.push(thread::spawn(move || {
-            // Set realtime priority for slot thread (USB gadget I/O).
-            if let Err(e) = priority::set_realtime_priority(10) {
-                warn!("[slot {}] Unable to set realtime priority: {}", slot, e);
-            }
-            gadget::run_slot(slot, &path, rx, rumble_tx, tick, state);
-        }));
+    if let Some(manager) = &manager {
+        for slot in 0..num_slots {
+            let rx = input_rx.remove(0);
+            let rumble_tx = rumble_tx.clone();
+            let state = state.clone();
+            let path = manager.hidg_path(slot);
+            slot_threads.push(thread::spawn(move || {
+                // Set realtime priority for slot thread (USB gadget I/O).
+                if let Err(e) = priority::set_realtime_priority(10) {
+                    warn!("[slot {}] Unable to set realtime priority: {}", slot, e);
+                }
+                gadget::run_slot(slot, &path, rx, rumble_tx, tick, state);
+            }));
+        }
+    } else {
+        // No gadget: drop the receivers so bridge sends fail fast (non-blocking).
+        input_rx.clear();
     }
 
-    // Create UI channels.
-    let (ui_command_tx, ui_command_rx) = flume::unbounded::<ui::UiCommand>();
-    let (ui_event_tx, ui_event_rx) = flume::unbounded::<ui::UiEvent>();
+    // Create the command channel (web UI -> bridge) and shared web state.
+    let (command_tx, command_rx) = flume::unbounded::<Command>();
+    let web_state = Arc::new(Mutex::new(WebState::default()));
 
     // Spawn the gilrs bridge with realtime priority.
     let bridge_state = state.clone();
+    let bridge_web_state = web_state.clone();
     let bridge_thread = thread::spawn(move || {
         // Set realtime priority for bridge thread (input polling).
         if let Err(e) = priority::set_realtime_priority(10) {
@@ -115,16 +148,28 @@ fn main() {
             rumble_rx,
             polling_rate,
             bridge_state,
-            ui_command_rx,
-            ui_event_tx,
+            command_rx,
+            bridge_web_state,
         );
     });
 
-    // Spawn the terminal UI.
-    let ui_state = state.clone();
-    let ui_thread = thread::spawn(move || {
-        ui::run_ui(num_slots, ui_command_tx, ui_event_rx, ui_state);
-    });
+    // Spawn the web UI.
+    let web_thread = if cli.no_web {
+        info!("--no-web set: web UI disabled");
+        None
+    } else {
+        let app = Arc::new(web::WebApp {
+            state: state.clone(),
+            web: web_state.clone(),
+            command_tx: command_tx.clone(),
+            num_slots,
+        });
+        Some(thread::spawn(move || {
+            if let Err(e) = web::serve(web_addr, app) {
+                error!("Web UI exited with error: {}", e);
+            }
+        }))
+    };
 
     // Wait for Ctrl-C.
     let (shutdown_tx, shutdown_rx) = flume::unbounded::<()>();
@@ -139,11 +184,15 @@ fn main() {
     *state.lock().unwrap() = AppState::Exiting;
 
     let _ = bridge_thread.join();
-    let _ = ui_thread.join();
+    if let Some(web_thread) = web_thread {
+        let _ = web_thread.join();
+    }
     for handle in slot_threads {
         let _ = handle.join();
     }
 
-    manager.destroy();
+    if let Some(manager) = &manager {
+        manager.destroy();
+    }
     info!("Gadget torn down. Goodbye.");
 }

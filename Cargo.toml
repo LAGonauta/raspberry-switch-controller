@@ -11,11 +11,13 @@ flume = "0.12.0"
 ctrlc = "3.5.2"
 clap = { version = "4.6.6", features = ["derive"] }
 libc = "0.2"
-log = "0.4"
+log = "0.4.34"
 pretty_env_logger = "0.5.0"
-governor = "0.6"
-crossterm = "0.29"
-ratatui = "0.30.2"
+governor = "0.10.4"
+axum = "0.8.9"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time", "net"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+maud = { version = "0.27.0", features = ["axum"] }
 
 [profile.release]
 lto = true

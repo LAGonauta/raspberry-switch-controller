@@ -10,7 +10,7 @@ Use the **latest version of every direct dependency**, unless it breaks the buil
 
 Versions verified at planning time (2026-09-02, `cargo search`):
 - Existing deps: `gilrs 0.11.2`, `flume 0.12.0`, `ctrlc 3.5.2`, `clap 4.6.6`, `libc 0.2` (latest stable; 1.0 line is pre-release), `log 0.4.34`, `pretty_env_logger 0.5.0`
-- `governor`: currently `0.6`; latest is `0.10.4` — try upgrading; if the rate-limiter API differs and breaks `bridge.rs`, pin the last working minor and note it
+- `governor`: upgraded from `0.6` to latest `0.10.4` — the rate-limiter API changed (`Clock` no longer implemented for references, `direct_with_clock` takes the clock by value, `Quota::per_second` arg semantics unchanged); migration was trivial: pass `clock.clone()` to `direct_with_clock` and keep the original for `wait_time_from(clock.now())`
 - Removed: `ratatui`, `crossterm`
 - New: `axum 0.8.9`, `tokio 1.53.1` (`rt-multi-thread`, `sync`, `time`, `net`), `tokio-stream 0.1.19` (`sync`), `maud 0.27.0` (`axum` feature)
 - Vendored JS (checked into `web/static/` so the Pi needs no internet): `htmx.min.js` (2.x), `htmx-ext-sse.min.js` (2.x), `alpine.min.js` (3.x)

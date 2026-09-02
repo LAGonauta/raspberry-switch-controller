@@ -17,6 +17,7 @@ This project turns a Raspberry Pi 4 into a USB adapter that allows multiple Xbox
 - **Plug-and-play**: Xbox controllers automatically map to available slots
 - **Rumble support**: Switch rumble/vibration is forwarded to Xbox controller haptics
 - **Fixed slots**: Stable connections - no disconnection alerts when Xbox pads connect/disconnect
+- **Web UI**: Full controller status page served over the network — controller/slot list, remap, vibrate/identify, and a live controller tester that lights up buttons as you press them
 - **Low latency**: Configurable polling rate (20-1000 Hz, default 250 Hz)
 - **Realtime priority**: Optimized for smooth input handling
 
@@ -94,9 +95,17 @@ raspberry-switch-controller [OPTIONS]
 Options:
   --controllers <N>     Number of Switch Pro Controller slots to expose (1-8) [default: 4]
   -p, --polling-rate <HZ>  Polling rate in Hz (20-1000) [default: 250]
+      --web-addr <ADDR>    Web UI listen address [default: 0.0.0.0:8080]
+      --no-web             Disable the web UI
+      --no-gadget          Skip USB gadget creation (UI development without hardware)
   -h, --help            Print help
   -V, --version         Print version
 ```
+
+The web UI is served over your network (default `0.0.0.0:8080`). Open
+`http://<pi-ip>:8080` from any phone/laptop on the same network to see the
+controller status, remap controllers, trigger vibration, and test live button
+input on the controller tester panel.
 
 ### Examples
 
@@ -148,8 +157,9 @@ sudo ./target/release/raspberry-switch-controller -p 1000
 | `bridge.rs` | Xbox controller polling, slot assignment, input mapping |
 | `gadget.rs` | USB gadget creation via configfs, per-slot HID I/O |
 | `mapping.rs` | Xbox → Switch button/stick mapping |
-| `models.rs` | Data structures (SwitchInput, Rumble, AppState) |
+| `models.rs` | Data structures (SwitchInput, Rumble, AppState, WebState) |
 | `switch_proto.rs` | Switch Pro HID protocol implementation |
+| `web.rs` | HARM-stack web UI (Axum + Maud + HTMX SSE + Alpine) |
 | `priority.rs` | Realtime priority setting for performance |
 
 ## Known Limitations

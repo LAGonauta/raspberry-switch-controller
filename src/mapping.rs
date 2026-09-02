@@ -5,7 +5,7 @@
 
 use gilrs::{Axis, Button, Gamepad};
 
-use crate::models::{Stick, SwitchInput};
+use crate::models::{Stick, SwitchInput, XboxInput};
 
 /// Trigger axis threshold above which ZL/ZR is considered pressed. From
 /// `xboxjoystick.go:7` (-0.8): gilrs normalizes trigger axes to [-1, 1] with
@@ -60,5 +60,46 @@ impl Mapping {
 
     fn trigger_pressed(&self, gamepad: &Gamepad, axis: Axis, button: Button) -> bool {
         gamepad.is_pressed(button) || gamepad.value(axis) >= TRIGGER_THRESHOLD
+    }
+}
+
+impl XboxInput {
+    /// Snapshot the raw Xbox state for the web tester page (Xbox-native labels).
+    pub fn from_gamepad(gamepad: &Gamepad) -> Self {
+        let lt_axis = gamepad.value(Axis::LeftZ);
+        let rt_axis = gamepad.value(Axis::RightZ);
+        // gilrs trigger axes are [-1 .. 1] with the resting value at -1.0.
+        let axis_to_value = |v: f32| ((v + 1.0) / 2.0).clamp(0.0, 1.0);
+        XboxInput {
+            // Xbox button labels: South=A, East=B, West=X, North=Y.
+            a: gamepad.is_pressed(Button::South),
+            b: gamepad.is_pressed(Button::East),
+            x: gamepad.is_pressed(Button::West),
+            y: gamepad.is_pressed(Button::North),
+            lb: gamepad.is_pressed(Button::LeftTrigger),
+            rb: gamepad.is_pressed(Button::RightTrigger),
+            lt: gamepad.is_pressed(Button::LeftTrigger2) || lt_axis >= TRIGGER_THRESHOLD,
+            rt: gamepad.is_pressed(Button::RightTrigger2) || rt_axis >= TRIGGER_THRESHOLD,
+            lt_value: axis_to_value(lt_axis),
+            rt_value: axis_to_value(rt_axis),
+            view: gamepad.is_pressed(Button::Select),
+            menu: gamepad.is_pressed(Button::Start),
+            xbox: gamepad.is_pressed(Button::Mode),
+            left_stick_press: gamepad.is_pressed(Button::LeftThumb),
+            right_stick_press: gamepad.is_pressed(Button::RightThumb),
+            dpad_up: gamepad.is_pressed(Button::DPadUp),
+            dpad_down: gamepad.is_pressed(Button::DPadDown),
+            dpad_left: gamepad.is_pressed(Button::DPadLeft),
+            dpad_right: gamepad.is_pressed(Button::DPadRight),
+            // Y inverted so up (negative raw) is positive, matching Stick.
+            left_stick: Stick::new(
+                gamepad.value(Axis::LeftStickX),
+                -gamepad.value(Axis::LeftStickY),
+            ),
+            right_stick: Stick::new(
+                gamepad.value(Axis::RightStickX),
+                -gamepad.value(Axis::RightStickY),
+            ),
+        }
     }
 }

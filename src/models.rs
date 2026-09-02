@@ -89,6 +89,75 @@ pub struct Controller {
     pub slot: usize,
 }
 
+/// Raw Xbox input snapshot used by the web tester page (Xbox-native labels).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct XboxInput {
+    pub a: bool,
+    pub b: bool,
+    pub x: bool,
+    pub y: bool,
+    pub lb: bool,
+    pub rb: bool,
+    /// Left trigger button pressed.
+    pub lt: bool,
+    /// Right trigger button pressed.
+    pub rt: bool,
+    /// Left trigger analog value 0.0 (rest) .. 1.0 (full pull).
+    pub lt_value: f32,
+    /// Right trigger analog value 0.0 (rest) .. 1.0 (full pull).
+    pub rt_value: f32,
+    pub view: bool,
+    pub menu: bool,
+    pub xbox: bool,
+    pub left_stick_press: bool,
+    pub right_stick_press: bool,
+    pub dpad_up: bool,
+    pub dpad_down: bool,
+    pub dpad_left: bool,
+    pub dpad_right: bool,
+    pub left_stick: Stick,
+    pub right_stick: Stick,
+}
+
+/// A controller as displayed by the web UI.
+#[derive(Clone, Debug)]
+pub struct WebController {
+    /// Numeric gilrs gamepad id (`usize::from(GamepadId)`).
+    pub id: usize,
+    pub name: String,
+    pub slot: Option<usize>,
+    /// Raw Switch battery byte from `SwitchInput` (see `SwitchInput::battery`).
+    pub battery: u8,
+    pub is_vibrating: bool,
+}
+
+/// Read-only snapshot the web layer renders from. Maintained by the bridge
+/// thread; the web thread never mutates it.
+#[derive(Clone, Debug, Default)]
+pub struct WebState {
+    pub controllers: Vec<WebController>,
+    /// Latest raw Xbox input per controller, aligned by index with `controllers`.
+    pub inputs: Vec<Option<XboxInput>>,
+    pub status: String,
+}
+
+/// Commands sent from the web UI to the bridge thread.
+#[derive(Debug, Clone, Copy)]
+pub enum Command {
+    /// Remap a controller (numeric gilrs id) to a new slot.
+    Remap {
+        controller_id: usize,
+        new_slot: usize,
+    },
+    /// Send a quick vibration to identify a controller.
+    Identify { controller_id: usize },
+    /// Send vibration for a specific duration.
+    Vibrate {
+        controller_id: usize,
+        duration_ms: u64,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppState {
     Connected,

@@ -21,6 +21,9 @@ sudo ./target/release/raspberry-switch-controller --controllers 4 --polling-rate
 **CLI Arguments:**
 - `--controllers <N>`: 1-8 slots (default 4, max 8)
 - `--polling-rate <Hz>`: 20-1000 Hz (default 250)
+- `--web-addr <host:port>`: web UI listen address (default `0.0.0.0:8080`)
+- `--no-web`: disable the web UI
+- `--no-gadget`: skip USB gadget creation (UI development without root/hardware)
 
 ### Cross-compilation
 Root project has `Cross.toml` with pre-build dependencies for aarch64 (RPi4).
@@ -42,11 +45,18 @@ CROSS_CONTAINER_ENGINE=podman cross build --target aarch64-unknown-linux-gnu --r
 | Module | Responsibility |
 |--------|----------------|
 | `src/main.rs` | CLI parsing, thread spawning, Ctrl-C handling |
-| `src/bridge.rs` | gilrs loop, slot assignment, Xbox pad enumeration |
+| `src/bridge.rs` | gilrs loop, slot assignment, Xbox pad enumeration, WebState maintenance |
 | `src/gadget.rs` | USB gadget creation via configfs, per-slot HID tasks |
-| `src/mapping.rs` | Xbox → Switch button/stick mapping |
-| `src/models.rs` | Data structures (SwitchInput, Rumble, AppState) |
+| `src/mapping.rs` | Xbox → Switch button/stick mapping + `XboxInput` tester snapshot |
+| `src/models.rs` | Data structures (SwitchInput, Rumble, AppState, WebState, Command) |
 | `src/switch_proto.rs` | Switch Pro HID protocol (handshake, reports, SPI ROM, rumble) |
+| `src/web.rs` | HARM-stack web UI (Axum + Maud + HTMX SSE + Alpine), reads WebState, sends Commands |
+
+### Web UI (HARM stack)
+- HTMX 2.x + Axum/Alpine.js + Rust + Maud, all server-rendered HTML fragments
+- Live controller tester streams raw Xbox button/stick state over SSE (~30Hz)
+- `#overview` polls `/fragments/overview` every 1s for list/slots/status
+- Vendored JS in `web/static/` (self-contained binary, no internet on Pi)
 
 ### Key Design Decisions
 
