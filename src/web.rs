@@ -162,12 +162,18 @@ async fn static_file(AxumPath(file): AxumPath<String>) -> Response {
 async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
     let web = app.web.clone();
+    let state = app.state.clone();
     let num_slots = app.num_slots;
 
     tokio::spawn(async move {
         let mut last_ids: Option<Vec<usize>> = None;
         let mut last_readouts: HashMap<usize, String> = HashMap::new();
         loop {
+            // Terminate on shutdown so graceful shutdown doesn't wait forever
+            // for this open SSE stream.
+            if state.lock().map(|s| s.is_exiting()).unwrap_or(true) {
+                break;
+            }
             let (ids, readouts, pads) = {
                 let ws = match web.lock() {
                     Ok(guard) => guard,
