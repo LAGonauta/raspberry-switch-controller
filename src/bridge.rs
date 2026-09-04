@@ -485,8 +485,12 @@ pub fn run(
         }
 
         // Poll and send per slot (idle slots send neutral reports).
+        // Collect inputs while holding the web lock (mirroring battery/name/
+        // inputs into the web state), then drop the guard before any sends so
+        // a stalled slot thread can never block the web UI.
         let mut ws_guard = web_state.lock().unwrap();
-        for (slot, tx) in input_tx.iter().enumerate().take(num_slots) {
+        let mut inputs = Vec::with_capacity(num_slots);
+        for (slot, _tx) in input_tx.iter().enumerate().take(num_slots) {
             let input = match controllers.iter().position(|c| c.slot == slot) {
                 Some(idx) => {
                     let controller = &controllers[idx];
@@ -513,9 +517,23 @@ pub fn run(
                 }
                 None => NEUTRAL_INPUT,
             };
-            let _ = tx.send(input);
+            inputs.push(input);
         }
         drop(ws_guard);
+
+        // Non-blocking latest-wins sends: a full channel just drops the stale
+        // input and the slot picks up the next poll's input. Disconnected
+        // (no-gadget dev mode drops all receivers) must stay silent.
+        for (slot, tx) in input_tx.iter().enumerate().take(num_slots) {
+            if let Err(e) = tx.send_timeout(inputs[slot], Duration::from_millis(1)) {
+                match e {
+                    flume::SendTimeoutError::Timeout(_) => {
+                        warn!("Slot {} send timed out; dropping stale input", slot);
+                    }
+                    flume::SendTimeoutError::Disconnected(_) => {}
+                }
+            }
+        }
 
         if let Err(e) = limiter.check() {
             thread::sleep(e.wait_time_from(clock.now()));
