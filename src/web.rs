@@ -160,8 +160,10 @@ async fn static_file(AxumPath(file): AxumPath<String>) -> Response {
         .unwrap()
 }
 
-/// SSE stream: pushes full pad-card sets on connect/disconnect (`pads`) and
-/// individual card readouts (`pad-<id>`) when they change (~30Hz).
+/// SSE stream: pushes the full pad-card set whenever any controller state
+/// changes (~30Hz). A single `pads` channel keeps every card (readout +
+/// Identify/Vibrate/Move controls) in sync, so a partial update can never
+/// leave the controls behind.
 async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
     let web = app.web.clone();
@@ -169,8 +171,7 @@ async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
     let num_slots = app.num_slots;
 
     tokio::spawn(async move {
-        let mut last_ids: Option<Vec<usize>> = None;
-        let mut last_readouts: HashMap<usize, String> = HashMap::new();
+        let mut last_pads: Option<String> = None;
         'sse: loop {
             // Terminate on shutdown so graceful shutdown doesn't wait forever
             // for this open SSE stream. Also catch a client that disconnected
@@ -178,62 +179,23 @@ async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
             if tx.is_closed() || state.lock().map(|s| s.is_exiting()).unwrap_or(true) {
                 break 'sse;
             }
-            let (ids, readouts) = {
+            let pads = {
                 let ws = match web.lock() {
                     Ok(guard) => guard,
                     Err(_) => break 'sse,
                 };
-                let ids: Vec<usize> = ws.controllers.iter().map(|c| usize::from(c.id)).collect();
-                let readouts: HashMap<usize, String> = ws
-                    .controllers
-                    .iter()
-                    .map(|c| {
-                        (
-                            usize::from(c.id),
-                            pad_readout(c, c.input.as_ref()).into_string(),
-                        )
-                    })
-                    .collect();
-                (ids, readouts)
+                pads_full(&ws, num_slots).into_string()
             };
-
-            let changed_ids = last_ids.as_ref() != Some(&ids);
-            if changed_ids {
-                let pads = {
-                    let ws = match web.lock() {
-                        Ok(guard) => guard,
-                        Err(_) => break 'sse,
-                    };
-                    pads_full(&ws, num_slots).into_string()
-                };
+            if last_pads.as_ref() != Some(&pads) {
                 if tx
-                    .send(Ok(Event::default().event("pads").data(pads)))
+                    .send(Ok(Event::default().event("pads").data(pads.clone())))
                     .await
                     .is_err()
                 {
                     break 'sse;
                 }
-                last_ids = Some(ids.clone());
-                last_readouts = readouts.clone();
-            } else {
-                for id in &ids {
-                    if let Some(readout) = readouts.get(id) {
-                        if last_readouts.get(id) != Some(readout) {
-                            if tx
-                                .send(Ok(Event::default()
-                                    .event(format!("pad-{}", id))
-                                    .data(readout.clone())))
-                                .await
-                                .is_err()
-                            {
-                                break 'sse;
-                            }
-                            last_readouts.insert(*id, readout.clone());
-                        }
-                    }
-                }
+                last_pads = Some(pads);
             }
-
             tokio::time::sleep(SSE_TICK).await;
         }
     });
@@ -345,7 +307,7 @@ fn pads_full(ws: &WebState, num_slots: usize) -> Markup {
 fn pad_card(c: &ControllerState, input: Option<&XboxInput>, num_slots: usize) -> Markup {
     html! {
         div.pad-card id=(format!("card-{}", usize::from(c.id))) {
-            div.pad-readout sse-swap=(format!("pad-{}", usize::from(c.id))) {
+            div.pad-readout {
                 (pad_readout(c, input))
             }
             div.pad-controls {
@@ -381,9 +343,9 @@ fn pad_card(c: &ControllerState, input: Option<&XboxInput>, num_slots: usize) ->
     }
 }
 
-/// Inner content of a pad card readout. This is the part swapped by SSE at
-/// ~30Hz; the controls (vibrate/remap) live outside it so client state
-/// (Alpine, form values) survives the updates.
+/// Inner content of a pad card readout. The controls (identify/vibrate/remap)
+/// live in the card but OUTSIDE this readout, so per-card state (Alpine, form
+/// values) survives the updates. The whole card is what the SSE stream sends.
 fn pad_readout(c: &ControllerState, input: Option<&XboxInput>) -> Markup {
     let inp = input.copied().unwrap_or_default();
     html! {
