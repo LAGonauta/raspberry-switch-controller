@@ -146,7 +146,8 @@ pub fn packet(ack: u8, cmd: u8, payload: &[u8]) -> Vec<u8> {
 pub fn input_report(count: u8, input: &SwitchInput) -> Vec<u8> {
     let input_buffer = encode_input(input);
     let mut report = packet(0x30, count, &input_buffer);
-    report[12] = input.battery; // battery/connection byte
+    report[2] = input.battery; // battery/connection byte
+    report[12] = 0x09; // rumble-echo constant (genuine pads emit 0x09..0x0C)
     report
 }
 

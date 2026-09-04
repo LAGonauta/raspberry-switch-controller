@@ -477,11 +477,11 @@ pub fn run(
                     let mut inp = mapping.poll(&gamepad);
                     // Set battery level from controller's power info
                     let battery = match gamepad.power_info() {
-                        PowerInfo::Discharging(pct) => percentage_to_level(pct) << 5,
-                        PowerInfo::Charging(pct) => (percentage_to_level(pct) << 5) | 0x10,
-                        PowerInfo::Charged => (4 << 5) | 0x10, // full + charging
-                        PowerInfo::Wired => 0x01,              // USB powered
-                        _ => 0,                                // unknown/empty
+                        PowerInfo::Discharging(pct) => (percentage_to_level(pct) << 5) | 0x01,
+                        PowerInfo::Charging(pct) => (percentage_to_level(pct) << 5) | 0x10 | 0x01,
+                        PowerInfo::Charged => (4 << 5) | 0x10 | 0x01, // full + charging
+                        PowerInfo::Wired => 0x81,                    // full + USB powered
+                        _ => 0x81,                                   // unknown/empty
                     };
                     inp.battery = battery;
                     // Mirror the latest raw Xbox state into the web UI.

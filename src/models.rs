@@ -70,7 +70,7 @@ pub const NEUTRAL_INPUT: SwitchInput = SwitchInput {
     right_stick_press: false,
     left_stick: Stick::new(0.0, 0.0),
     right_stick: Stick::new(0.0, 0.0),
-    battery: 0,
+    battery: 0x81,
 };
 
 /// Rumble event raised by a gadget slot (from a Switch output report).
