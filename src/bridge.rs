@@ -23,8 +23,8 @@ use log::{error, info, warn};
 
 use crate::mapping::Mapping;
 use crate::models::{
-    apply_remap, AppState, Command, ControllerState, RemapOutcome, Rumble, SwitchInput, WebState,
-    XboxInput, NEUTRAL_INPUT,
+    apply_remap, lock_mutex, AppState, Command, ControllerState, RemapOutcome, Rumble, SwitchInput,
+    WebState, XboxInput, NEUTRAL_INPUT,
 };
 
 /// Convert battery percentage (0-100) to Switch 5-level scale (0-4).
@@ -39,6 +39,17 @@ fn percentage_to_level(pct: u8) -> u8 {
         1 // critical
     } else {
         0 // empty
+    }
+}
+
+/// Compose the Switch battery byte from an Xbox power state. The gadget is
+/// always USB host-powered, so bit 0 (host powered) is always set.
+fn battery_byte(power: PowerInfo) -> u8 {
+    match power {
+        PowerInfo::Discharging(pct) => (percentage_to_level(pct) << 5) | 0x01,
+        PowerInfo::Charging(pct) => (percentage_to_level(pct) << 5) | 0x10 | 0x01,
+        PowerInfo::Charged => (4 << 5) | 0x10 | 0x01,
+        PowerInfo::Wired | PowerInfo::Unknown => 0x81,
     }
 }
 
@@ -96,7 +107,7 @@ fn start_manual_vibration(
 ) {
     // Re-entrancy guard: skip if this controller is already vibrating.
     let gamepad_id = {
-        let ws = web_state.lock().unwrap();
+        let ws = lock_mutex(web_state);
         let Some(controller) = ws
             .controllers
             .iter()
@@ -126,7 +137,7 @@ fn start_manual_vibration(
     };
 
     {
-        let mut ws = web_state.lock().unwrap();
+        let mut ws = lock_mutex(web_state);
         if let Some(controller) = ws
             .controllers
             .iter_mut()
@@ -154,7 +165,7 @@ fn start_manual_vibration(
             let _ = effect.stop();
         }
         // Effect is dropped here, which stops it.
-        let mut ws = web_state.lock().unwrap();
+        let mut ws = lock_mutex(&web_state);
         if let Some(controller) = ws
             .controllers
             .iter_mut()
@@ -188,7 +199,7 @@ pub fn run(
     // Attach any already-connected pads.
     for gamepad_id in gilrs.gamepads().map(|(id, _)| id).collect::<Vec<_>>() {
         {
-            let mut ws = web_state.lock().unwrap();
+            let mut ws = lock_mutex(&web_state);
             if ws.controllers.iter().any(|c| c.id == gamepad_id) {
                 continue;
             }
@@ -246,15 +257,13 @@ pub fn run(
     );
 
     loop {
-        if state.lock().unwrap().is_exiting() {
+        if lock_mutex(&state).is_exiting() {
             break;
         }
 
         // Apply rumble from gadget slots.
         while let Ok(rumble) = rumble_rx.try_recv() {
-            let controller_id = web_state
-                .lock()
-                .unwrap()
+            let controller_id = lock_mutex(&web_state)
                 .controllers
                 .iter()
                 .find(|c| c.slot == Some(rumble.slot))
@@ -339,18 +348,15 @@ pub fn run(
                     controller_id,
                     new_slot,
                 } => {
-                    let mut ws = web_state.lock().unwrap();
+                    let mut ws = lock_mutex(&web_state);
                     match apply_remap(&mut ws.controllers, controller_id, new_slot, num_slots) {
                         RemapOutcome::Swapped { old_slot, new_slot } => {
                             info!(
                                 "Swapped slots: controller {} (slot {}) <-> (slot {})",
                                 controller_id, new_slot, old_slot
                             );
-                            ws.status = format!(
-                                "Swapped slot {} <-> slot {}",
-                                new_slot + 1,
-                                old_slot + 1
-                            );
+                            ws.status =
+                                format!("Swapped slot {} <-> slot {}", new_slot + 1, old_slot + 1);
                         }
                         RemapOutcome::Moved => {
                             info!(
@@ -397,7 +403,7 @@ pub fn run(
                 gilrs::EventType::Connected => {
                     let name = gilrs.gamepad(event.id).name().to_string();
                     {
-                        let mut ws = web_state.lock().unwrap();
+                        let mut ws = lock_mutex(&web_state);
                         if ws.controllers.iter().any(|c| c.id == event.id) {
                             continue;
                         }
@@ -443,7 +449,7 @@ pub fn run(
                 gilrs::EventType::Disconnected => {
                     let name = gilrs.gamepad(event.id).name().to_string();
                     let freed_slot = {
-                        let mut ws = web_state.lock().unwrap();
+                        let mut ws = lock_mutex(&web_state);
                         let Some(pos) = ws.controllers.iter().position(|c| c.id == event.id) else {
                             continue;
                         };
@@ -474,21 +480,19 @@ pub fn run(
         // Collect inputs while holding the web lock (mirroring battery/name/
         // inputs into the web state), then drop the guard before any sends so
         // a stalled slot thread can never block the web UI.
-        let mut ws_guard = web_state.lock().unwrap();
+        let mut ws_guard = lock_mutex(&web_state);
         let mut inputs = Vec::with_capacity(num_slots);
         for slot in 0..num_slots {
-            let input = match ws_guard.controllers.iter_mut().find(|c| c.slot == Some(slot)) {
+            let input = match ws_guard
+                .controllers
+                .iter_mut()
+                .find(|c| c.slot == Some(slot))
+            {
                 Some(controller) => {
                     let gamepad = gilrs.gamepad(controller.id);
                     let mut inp = mapping.poll(&gamepad);
                     // Set battery level from controller's power info
-                    let battery = match gamepad.power_info() {
-                        PowerInfo::Discharging(pct) => (percentage_to_level(pct) << 5) | 0x01,
-                        PowerInfo::Charging(pct) => (percentage_to_level(pct) << 5) | 0x10 | 0x01,
-                        PowerInfo::Charged => (4 << 5) | 0x10 | 0x01, // full + charging
-                        PowerInfo::Wired => 0x81,                    // full + USB powered
-                        _ => 0x81,                                   // unknown/empty
-                    };
+                    let battery = battery_byte(gamepad.power_info());
                     inp.battery = battery;
                     // Mirror the latest raw Xbox state into the web UI.
                     controller.battery = battery;
@@ -538,5 +542,15 @@ mod tests {
         assert_eq!(percentage_to_level(69), 3);
         assert_eq!(percentage_to_level(70), 4);
         assert_eq!(percentage_to_level(100), 4);
+    }
+
+    #[test]
+    fn test_battery_byte() {
+        assert_eq!(battery_byte(PowerInfo::Discharging(80)), 0x81); // full + host
+        assert_eq!(battery_byte(PowerInfo::Discharging(40)), 0x41); // 2/4 + host
+        assert_eq!(battery_byte(PowerInfo::Charging(80)), 0x91); // full charging + host
+        assert_eq!(battery_byte(PowerInfo::Charged), 0x91);
+        assert_eq!(battery_byte(PowerInfo::Wired), 0x81);
+        assert_eq!(battery_byte(PowerInfo::Unknown), 0x81);
     }
 }

@@ -1,5 +1,11 @@
 use gilrs::GamepadId;
 
+/// Lock a mutex, recovering from poisoning: a thread that panicked while
+/// holding the lock must not take the whole daemon (or web UI) down with it.
+pub fn lock_mutex<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Stick {
     /// X in range [-1.0 .. 1.0]. -1.0 is Left, 1.0 is Right.
@@ -146,6 +152,14 @@ pub enum RemapOutcome {
     Swapped { old_slot: usize, new_slot: usize },
 }
 
+/// Minimal (id, slot) assignment entry used by the remap core; also lets unit
+/// tests exercise the swap/move logic without constructing gilrs ids.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotEntry {
+    pub id: usize,
+    pub slot: Option<usize>,
+}
+
 /// Apply a remap of `controller_id` (numeric gilrs id) to `new_slot`.
 /// Pure function over the controllers vec (single source of truth).
 pub fn apply_remap(
@@ -154,24 +168,45 @@ pub fn apply_remap(
     new_slot: usize,
     num_slots: usize,
 ) -> RemapOutcome {
+    let mut entries: Vec<SlotEntry> = controllers
+        .iter()
+        .map(|c| SlotEntry {
+            id: usize::from(c.id),
+            slot: c.slot,
+        })
+        .collect();
+    let outcome = apply_remap_entries(&mut entries, controller_id, new_slot, num_slots);
+    for (controller, entry) in controllers.iter_mut().zip(entries) {
+        controller.slot = entry.slot;
+    }
+    outcome
+}
+
+/// Core remap logic over `SlotEntry` pairs. Pure and unit-testable.
+pub fn apply_remap_entries(
+    entries: &mut [SlotEntry],
+    controller_id: usize,
+    new_slot: usize,
+    num_slots: usize,
+) -> RemapOutcome {
     if new_slot >= num_slots {
         return RemapOutcome::InvalidSlot;
     }
-    let Some(idx) = controllers.iter().position(|c| usize::from(c.id) == controller_id) else {
+    let Some(idx) = entries.iter().position(|e| e.id == controller_id) else {
         return RemapOutcome::NotFound;
     };
-    let Some(old_slot) = controllers[idx].slot else {
+    let Some(old_slot) = entries[idx].slot else {
         return RemapOutcome::NotFound; // not assigned to a slot
     };
     if old_slot == new_slot {
         return RemapOutcome::SameSlot;
     }
-    if let Some(other_idx) = controllers.iter().position(|c| c.slot == Some(new_slot)) {
-        controllers[other_idx].slot = Some(old_slot);
-        controllers[idx].slot = Some(new_slot);
+    if let Some(other_idx) = entries.iter().position(|e| e.slot == Some(new_slot)) {
+        entries[other_idx].slot = Some(old_slot);
+        entries[idx].slot = Some(new_slot);
         return RemapOutcome::Swapped { old_slot, new_slot };
     }
-    controllers[idx].slot = Some(new_slot);
+    entries[idx].slot = Some(new_slot);
     RemapOutcome::Moved
 }
 
@@ -206,3 +241,77 @@ impl AppState {
 
 pub const MAX_SLOTS: usize = 8;
 pub const DEFAULT_SLOTS: usize = 4;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entries(
+        id_a: usize,
+        slot_a: Option<usize>,
+        id_b: usize,
+        slot_b: Option<usize>,
+    ) -> Vec<SlotEntry> {
+        vec![
+            SlotEntry {
+                id: id_a,
+                slot: slot_a,
+            },
+            SlotEntry {
+                id: id_b,
+                slot: slot_b,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_apply_remap_entries_move() {
+        let mut e = entries(10, Some(0), 20, Some(1));
+        assert_eq!(apply_remap_entries(&mut e, 10, 2, 4), RemapOutcome::Moved);
+        assert_eq!(e[0].slot, Some(2));
+        assert_eq!(e[1].slot, Some(1));
+    }
+
+    #[test]
+    fn test_apply_remap_entries_swap() {
+        let mut e = entries(10, Some(0), 20, Some(1));
+        assert_eq!(
+            apply_remap_entries(&mut e, 10, 1, 4),
+            RemapOutcome::Swapped {
+                old_slot: 0,
+                new_slot: 1
+            }
+        );
+        assert_eq!(e[0].slot, Some(1));
+        assert_eq!(e[1].slot, Some(0));
+    }
+
+    #[test]
+    fn test_apply_remap_entries_invalid_slot() {
+        let mut e = entries(10, Some(0), 20, Some(1));
+        assert_eq!(
+            apply_remap_entries(&mut e, 10, 4, 4),
+            RemapOutcome::InvalidSlot
+        );
+    }
+
+    #[test]
+    fn test_apply_remap_entries_not_found() {
+        let mut e = entries(10, Some(0), 20, Some(1));
+        assert_eq!(
+            apply_remap_entries(&mut e, 999, 1, 4),
+            RemapOutcome::NotFound
+        );
+    }
+
+    #[test]
+    fn test_apply_remap_entries_same_slot() {
+        let mut e = entries(10, Some(0), 20, Some(1));
+        assert_eq!(
+            apply_remap_entries(&mut e, 10, 0, 4),
+            RemapOutcome::SameSlot
+        );
+        assert_eq!(e[0].slot, Some(0));
+        assert_eq!(e[1].slot, Some(1));
+    }
+}

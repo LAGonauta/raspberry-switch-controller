@@ -18,16 +18,3 @@ pub fn set_realtime_priority(priority: i32) -> io::Result<()> {
         }
     }
 }
-
-/// Set the current thread to use normal (SCHED_OTHER) scheduling.
-pub fn set_normal_priority() -> io::Result<()> {
-    unsafe {
-        let param = libc::sched_param { sched_priority: 0 };
-        let result = libc::sched_setscheduler(0, libc::SCHED_OTHER, &param);
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
-}

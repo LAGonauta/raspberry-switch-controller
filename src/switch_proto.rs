@@ -461,3 +461,197 @@ pub fn spi_read_response(count: u8, input: &SwitchInput, report: &[u8]) -> Optio
     resp.extend_from_slice(&data[start..end]);
     Some(subcommand_response(count, input, true, report[10], &resp))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Stick, SwitchInput, NEUTRAL_INPUT};
+
+    fn all_buttons() -> SwitchInput {
+        SwitchInput {
+            dpad_up: true,
+            dpad_down: true,
+            dpad_left: true,
+            dpad_right: true,
+            a: true,
+            b: true,
+            x: true,
+            y: true,
+            r: true,
+            zr: true,
+            l: true,
+            zl: true,
+            home: true,
+            plus: true,
+            minus: true,
+            capture: true,
+            left_stick_press: true,
+            right_stick_press: true,
+            ..NEUTRAL_INPUT
+        }
+    }
+
+    #[test]
+    fn test_encode_input_neutral() {
+        assert_eq!(
+            encode_input(&NEUTRAL_INPUT),
+            [0x81, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00]
+        );
+    }
+
+    #[test]
+    fn test_encode_input_all_buttons() {
+        assert_eq!(
+            encode_input(&all_buttons()),
+            [0x81, 0xCF, 0x3F, 0xCF, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00]
+        );
+    }
+
+    #[test]
+    fn test_encode_input_stick_extremes() {
+        let input = SwitchInput {
+            left_stick: Stick::new(-1.0, -1.0),
+            right_stick: Stick::new(1.0, 1.0),
+            ..NEUTRAL_INPUT
+        };
+        assert_eq!(
+            encode_input(&input),
+            [0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00]
+        );
+    }
+
+    #[test]
+    fn test_encode_input_stick_clamp() {
+        let input = SwitchInput {
+            left_stick: Stick::new(2.0, 2.0), // clamps to 1.0/1.0 -> 4095/4095 (max)
+            right_stick: Stick::new(-2.0, -2.0), // clamps to -1.0/-1.0 -> 0/0 (min)
+            ..NEUTRAL_INPUT
+        };
+        assert_eq!(
+            encode_input(&input),
+            [0x81, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn test_pack_shorts() {
+        assert_eq!(pack_shorts(0, 0), [0, 0, 0]);
+        assert_eq!(pack_shorts(4095, 4095), [0xFF, 0xFF, 0xFF]);
+        assert_eq!(pack_shorts(2048, 2048), [0x00, 0x08, 0x80]);
+    }
+
+    #[test]
+    fn test_packet_padding() {
+        let data = packet(0x30, 0x01, &[0x81, 0x00]);
+        assert_eq!(data.len(), 64);
+        assert_eq!(data[0], 0x30);
+        assert_eq!(data[1], 0x01);
+        assert_eq!(data[2], 0x81);
+        assert_eq!(data[3], 0x00);
+        assert!(data[4..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn test_packet_cap() {
+        let data = packet(0x30, 0x01, &vec![0xAB; 70]);
+        assert_eq!(data.len(), 64);
+        assert_eq!(data[0], 0x30);
+        assert_eq!(data[1], 0x01);
+        assert!(data[2..].iter().all(|&b| b == 0xAB));
+    }
+
+    #[test]
+    fn test_spi_read_response_in_range() {
+        let mut report = [0u8; 16];
+        report[0] = 0x01;
+        report[10] = 0x10;
+        report[11] = 0; // start
+        report[12] = 0x60; // addr
+        report[15] = 4; // len
+        let resp = spi_read_response(0, &NEUTRAL_INPUT, &report).unwrap();
+        assert_eq!(resp[0], 0x21);
+        assert_eq!(resp[13], 0x90); // ack 0x80 | 0x10
+        assert_eq!(resp[15..20], [0, 0x60, 0, 0, 4]); // echoed report[11..16]
+        assert_eq!(resp[20..24], SPI_ROM_DATA[0].1[0..4]);
+    }
+
+    #[test]
+    fn test_spi_read_response_out_of_range_addr() {
+        let mut report = [0u8; 16];
+        report[10] = 0x10;
+        report[12] = 0x99;
+        assert!(spi_read_response(0, &NEUTRAL_INPUT, &report).is_none());
+    }
+
+    #[test]
+    fn test_spi_read_response_malformed_short() {
+        assert!(spi_read_response(0, &NEUTRAL_INPUT, &[0u8; 15]).is_none());
+    }
+
+    #[test]
+    fn test_spi_read_response_past_end() {
+        let mut report = [0u8; 16];
+        report[10] = 0x10;
+        report[11] = 250; // start
+        report[12] = 0x60; // addr
+        report[15] = 10; // len
+        assert!(spi_read_response(0, &NEUTRAL_INPUT, &report).is_none());
+    }
+
+    #[test]
+    fn test_subcommand_response_ack_empty() {
+        let resp = subcommand_response(0, &NEUTRAL_INPUT, true, 0x10, &[]);
+        assert_eq!(resp[13], 0x80);
+        assert_eq!(resp[14], 0x10);
+    }
+
+    #[test]
+    fn test_subcommand_response_ack_with_data() {
+        let resp = subcommand_response(0, &NEUTRAL_INPUT, true, 0x10, &[1, 2]);
+        assert_eq!(resp[13], 0x80 | 0x10);
+        assert_eq!(resp[15], 1);
+        assert_eq!(resp[16], 2);
+    }
+
+    #[test]
+    fn test_subcommand_response_ack_false() {
+        let resp = subcommand_response(0, &NEUTRAL_INPUT, false, 0x10, &[]);
+        assert_eq!(resp[13], 0x00);
+    }
+
+    #[test]
+    fn test_input_report_battery_placement() {
+        let report = input_report(
+            0x01,
+            &SwitchInput {
+                battery: 0x91,
+                ..NEUTRAL_INPUT
+            },
+        );
+        assert_eq!(report[2], 0x91);
+        assert_eq!(report[12], 0x09);
+    }
+
+    #[test]
+    fn test_decode_rumble_silence() {
+        let mut state = HdrState::new();
+        assert_eq!(
+            decode_rumble(&[0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0], &mut state),
+            Some((0, 0))
+        );
+    }
+
+    #[test]
+    fn test_decode_rumble_max() {
+        let w: u32 = (1 << 30) | (127 << 23) | (127 << 9);
+        let left = w.to_le_bytes();
+        let mut report = [0u8; 10];
+        report[0] = 0x10;
+        report[2..6].copy_from_slice(&left);
+        report[6..10].copy_from_slice(&left);
+        assert_eq!(
+            decode_rumble(&report, &mut HdrState::new()),
+            Some((255, 255))
+        );
+    }
+}

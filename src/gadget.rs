@@ -232,7 +232,7 @@ pub fn run_slot(
                 let n = match read_file.read(&mut buf) {
                     Ok(0) => {
                         read_errors += 1;
-                        if read_errors == 1 || read_errors % 50 == 0 {
+                        if read_errors == 1 || read_errors.is_multiple_of(50) {
                             error!("[slot {}] read EOF (host disconnected)", slot);
                         }
                         input_active.store(false, Ordering::Relaxed);
@@ -247,7 +247,7 @@ pub fn run_slot(
                     }
                     Err(e) => {
                         read_errors += 1;
-                        if read_errors == 1 || read_errors % 50 == 0 {
+                        if read_errors == 1 || read_errors.is_multiple_of(50) {
                             error!("[slot {}] read error: {}", slot, e);
                         }
                         input_active.store(false, Ordering::Relaxed);
@@ -365,7 +365,7 @@ pub fn run_slot(
             let mut guard = write_lock.lock().unwrap();
             if let Err(e) = guard.write_all(&report) {
                 write_errors += 1;
-                if write_errors == 1 || write_errors % 50 == 0 {
+                if write_errors == 1 || write_errors.is_multiple_of(50) {
                     error!("[slot {}] write error: {}", slot, e);
                 }
                 input_active.store(false, Ordering::Relaxed);

@@ -15,7 +15,9 @@ use clap::Parser;
 use log::{error, info, warn};
 
 use crate::gadget::GadgetManager;
-use crate::models::{AppState, Command, SwitchInput, WebState, DEFAULT_SLOTS, MAX_SLOTS};
+use crate::models::{
+    lock_mutex, AppState, Command, SwitchInput, WebState, DEFAULT_SLOTS, MAX_SLOTS,
+};
 
 const MIN_SLOTS: usize = 1;
 const MIN_POLLING_RATE: u32 = 20;
@@ -181,7 +183,7 @@ fn main() {
 
     let _ = shutdown_rx.recv();
     info!("Shutting down...");
-    *state.lock().unwrap() = AppState::Exiting;
+    *lock_mutex(&state) = AppState::Exiting;
 
     let _ = bridge_thread.join();
     if let Some(web_thread) = web_thread {

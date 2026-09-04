@@ -27,7 +27,7 @@ use maud::{html, Markup};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::models::{AppState, Command, ControllerState, Stick, WebState, XboxInput};
+use crate::models::{lock_mutex, AppState, Command, ControllerState, Stick, WebState, XboxInput};
 
 const WEB_HTMX: &str = include_str!("../web/static/htmx.min.js");
 const WEB_SSE: &str = include_str!("../web/static/htmx-ext-sse.min.js");
@@ -89,12 +89,12 @@ pub fn serve(addr: SocketAddr, app: Arc<WebApp>) -> std::io::Result<()> {
 // --- Handlers ---------------------------------------------------------------
 
 async fn index(State(app): State<Arc<WebApp>>) -> Html<String> {
-    let ws = app.web.lock().unwrap();
+    let ws = lock_mutex(&app.web);
     Html(page(&ws, app.num_slots).into_string())
 }
 
 async fn overview_fragment(State(app): State<Arc<WebApp>>) -> Html<String> {
-    let ws = app.web.lock().unwrap();
+    let ws = lock_mutex(&app.web);
     Html(overview_partial(&ws, app.num_slots).into_string())
 }
 
@@ -109,7 +109,7 @@ async fn action_identify(State(app): State<Arc<WebApp>>, Form(form): FormData) -
             .command_tx
             .try_send(Command::Identify { controller_id: id });
     }
-    let ws = app.web.lock().unwrap();
+    let ws = lock_mutex(&app.web);
     Html(overview_partial(&ws, app.num_slots).into_string())
 }
 
@@ -127,7 +127,7 @@ async fn action_vibrate(State(app): State<Arc<WebApp>>, Form(form): FormData) ->
             duration_ms,
         });
     }
-    let ws = app.web.lock().unwrap();
+    let ws = lock_mutex(&app.web);
     Html(overview_partial(&ws, app.num_slots).into_string())
 }
 
@@ -142,7 +142,7 @@ async fn action_remap(State(app): State<Arc<WebApp>>, Form(form): FormData) -> H
             new_slot,
         });
     }
-    let ws = app.web.lock().unwrap();
+    let ws = lock_mutex(&app.web);
     Html(overview_partial(&ws, app.num_slots).into_string())
 }
 
@@ -175,9 +175,7 @@ async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
             // Terminate on shutdown so graceful shutdown doesn't wait forever
             // for this open SSE stream. Also catch a client that disconnected
             // while the server was idle.
-            if tx.is_closed()
-                || state.lock().map(|s| s.is_exiting()).unwrap_or(true)
-            {
+            if tx.is_closed() || state.lock().map(|s| s.is_exiting()).unwrap_or(true) {
                 break 'sse;
             }
             let (ids, readouts) = {
