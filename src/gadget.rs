@@ -197,11 +197,12 @@ pub fn run_slot(
     switch_proto::hdr_reset_slot(slot);
 
     let count = Arc::new(AtomicU8::new(0));
-    let input_active = Arc::new(AtomicBool::new(true));
-    // Report mode requested by the host via the set-report-mode subcommand.
-    // Default to full mode (0x30) and only emit input reports when the host
-    // has actually selected it.
-    let report_mode = Arc::new(AtomicU8::new(0x30));
+    let input_active = Arc::new(AtomicBool::new(false));
+    // Report mode requested by the host via the set-report-mode subcommand
+    // (0x21). 0x00 = not selected (gate closed); 0x30 = full mode (Switch 2
+    // flow, gate open). Input reports are only emitted once the host has
+    // selected a mode or completed the Switch 1 (0x80/0x04) handshake.
+    let report_mode = Arc::new(AtomicU8::new(0x00));
 
     // Reader thread: host output reports + rumble. Detached on purpose: it
     // blocks in read() while the Switch is idle, so joining it would hang
@@ -215,14 +216,38 @@ pub fn run_slot(
         let report_mode = report_mode.clone();
         let mut buf = [0u8; READ_BUF_LEN];
         thread::spawn(move || {
+            let mut read_errors: u32 = 0;
             loop {
                 if state.lock().unwrap().is_exiting() {
                     break;
                 }
                 let n = match read_file.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => n,
-                    Err(_) => break,
+                    Ok(0) => {
+                        read_errors += 1;
+                        if read_errors == 1 || read_errors % 50 == 0 {
+                            error!("[slot {}] read EOF (host disconnected)", slot);
+                        }
+                        input_active.store(false, Ordering::Relaxed);
+                        report_mode.store(0x00, Ordering::Relaxed);
+                        switch_proto::hdr_reset_slot(slot);
+                        thread::sleep(Duration::from_millis(50));
+                        continue;
+                    }
+                    Ok(n) => {
+                        read_errors = 0;
+                        n
+                    }
+                    Err(e) => {
+                        read_errors += 1;
+                        if read_errors == 1 || read_errors % 50 == 0 {
+                            error!("[slot {}] read error: {}", slot, e);
+                        }
+                        input_active.store(false, Ordering::Relaxed);
+                        report_mode.store(0x00, Ordering::Relaxed);
+                        switch_proto::hdr_reset_slot(slot);
+                        thread::sleep(Duration::from_millis(50));
+                        continue;
+                    }
                 };
                 if n < 2 {
                     continue;
@@ -283,6 +308,9 @@ pub fn run_slot(
                                 }
                             }
                             0x21 => {
+                                if report.len() < 12 {
+                                    continue;
+                                }
                                 report_mode.store(report[11], Ordering::Relaxed);
                                 switch_proto::set_report_mode_response(
                                     c,
@@ -307,8 +335,11 @@ pub fn run_slot(
         })
     };
 
-    // Writer loop: input reports on ticker.
+    // Writer loop: input reports on ticker. Never dies on a failed write: a
+    // write to /dev/hidgN fails with ESHUTDOWN until the host re-enumerates,
+    // so reset the connection gates and wait for the next handshake instead.
     let mut latest = NEUTRAL_INPUT;
+    let mut write_errors: u32 = 0;
     loop {
         if state.lock().unwrap().is_exiting() {
             break;
@@ -318,12 +349,19 @@ pub fn run_slot(
             latest = input;
         }
 
-        if input_active.load(Ordering::Relaxed) && report_mode.load(Ordering::Relaxed) == 0x30 {
+        if input_active.load(Ordering::Relaxed) || report_mode.load(Ordering::Relaxed) == 0x30 {
             let c = count.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
             let report = switch_proto::input_report(c, &latest);
             let mut guard = write_lock.lock().unwrap();
-            if guard.write_all(&report).is_err() {
-                break;
+            if let Err(e) = guard.write_all(&report) {
+                write_errors += 1;
+                if write_errors == 1 || write_errors % 50 == 0 {
+                    error!("[slot {}] write error: {}", slot, e);
+                }
+                input_active.store(false, Ordering::Relaxed);
+                report_mode.store(0x00, Ordering::Relaxed);
+                switch_proto::hdr_reset_slot(slot);
+                thread::sleep(Duration::from_millis(50));
             }
         }
     }
