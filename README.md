@@ -157,7 +157,7 @@ sudo ./target/release/raspberry-switch-controller -p 1000
 | `bridge.rs` | Xbox controller polling, slot assignment, input mapping |
 | `gadget.rs` | USB gadget creation via configfs, per-slot HID I/O |
 | `mapping.rs` | Xbox → Switch button/stick mapping |
-| `models.rs` | Data structures (SwitchInput, Rumble, AppState, WebState) |
+| `models.rs` | Data structures (SwitchInput, Rumble, ControllerState, WebState, Command) + pure `apply_remap` |
 | `switch_proto.rs` | Switch Pro HID protocol implementation |
 | `web.rs` | HARM-stack web UI (Axum + Maud + HTMX SSE + Alpine) |
 | `priority.rs` | Realtime priority setting for performance |

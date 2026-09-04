@@ -45,11 +45,11 @@ CROSS_CONTAINER_ENGINE=podman cross build --target aarch64-unknown-linux-gnu --r
 | Module | Responsibility |
 |--------|----------------|
 | `src/main.rs` | CLI parsing, thread spawning, Ctrl-C handling |
-| `src/bridge.rs` | gilrs loop, slot assignment, Xbox pad enumeration, WebState maintenance |
+| `src/bridge.rs` | gilrs loop, slot assignment, Xbox pad enumeration, maintains `WebState.controllers` (single source of truth) |
 | `src/gadget.rs` | USB gadget creation via configfs, per-slot HID tasks |
 | `src/mapping.rs` | Xbox → Switch button/stick mapping + `XboxInput` tester snapshot |
-| `src/models.rs` | Data structures (SwitchInput, Rumble, AppState, WebState, Command) |
-| `src/switch_proto.rs` | Switch Pro HID protocol (handshake, reports, SPI ROM, rumble) |
+| `src/models.rs` | Data structures (SwitchInput, Rumble, AppState, ControllerState, WebState, Command) + pure `apply_remap` |
+| `src/switch_proto.rs` | Switch Pro HID protocol (handshake, reports, SPI ROM, rumble, per-slot `HdrState`) |
 | `src/web.rs` | HARM-stack web UI (Axum + Maud + HTMX SSE + Alpine), reads WebState, sends Commands |
 
 ### Web UI (HARM stack)
@@ -72,11 +72,13 @@ CROSS_CONTAINER_ENGINE=podman cross build --target aarch64-unknown-linux-gnu --r
 - Install ripgrep: `cargo install ripgrep`
 
 ### Code Quality
-- `cargo fmt` needed: formatting issues exist in several files
-- `cargo clippy` passes with no warnings
+- `cargo fmt --check` passes (run `cargo fmt` after edits)
+- `cargo clippy -- -D warnings` passes with no warnings
 
-### No Test Suite
-No tests found in the codebase. Verification requires hardware.
+### Test Suite
+- `cargo test`: unit tests for `switch_proto` (report encoding, packet layout,
+  SPI bounds, rumble decode), `bridge` (battery byte, remap), `models`
+  (`apply_remap` swap/move cases). End-to-end behavior still requires hardware.
 
 ## Critical Constraints
 
