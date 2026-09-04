@@ -171,16 +171,19 @@ async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
     tokio::spawn(async move {
         let mut last_ids: Option<Vec<usize>> = None;
         let mut last_readouts: HashMap<usize, String> = HashMap::new();
-        loop {
+        'sse: loop {
             // Terminate on shutdown so graceful shutdown doesn't wait forever
-            // for this open SSE stream.
-            if state.lock().map(|s| s.is_exiting()).unwrap_or(true) {
-                break;
+            // for this open SSE stream. Also catch a client that disconnected
+            // while the server was idle.
+            if tx.is_closed()
+                || state.lock().map(|s| s.is_exiting()).unwrap_or(true)
+            {
+                break 'sse;
             }
-            let (ids, readouts, pads) = {
+            let (ids, readouts) = {
                 let ws = match web.lock() {
                     Ok(guard) => guard,
-                    Err(_) => break,
+                    Err(_) => break 'sse,
                 };
                 let ids: Vec<usize> = ws.controllers.iter().map(|c| c.id).collect();
                 let readouts: HashMap<usize, String> = ws
@@ -194,18 +197,24 @@ async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
                         )
                     })
                     .collect();
-                let pads = pads_full(&ws, num_slots).into_string();
-                (ids, readouts, pads)
+                (ids, readouts)
             };
 
             let changed_ids = last_ids.as_ref() != Some(&ids);
             if changed_ids {
+                let pads = {
+                    let ws = match web.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => break 'sse,
+                    };
+                    pads_full(&ws, num_slots).into_string()
+                };
                 if tx
                     .send(Ok(Event::default().event("pads").data(pads)))
                     .await
                     .is_err()
                 {
-                    break;
+                    break 'sse;
                 }
                 last_ids = Some(ids.clone());
                 last_readouts = readouts.clone();
@@ -220,7 +229,7 @@ async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
                                 .await
                                 .is_err()
                             {
-                                break;
+                                break 'sse;
                             }
                             last_readouts.insert(*id, readout.clone());
                         }
