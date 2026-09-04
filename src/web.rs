@@ -117,7 +117,10 @@ async fn action_vibrate(State(app): State<Arc<WebApp>>, Form(form): FormData) ->
     let id = form
         .get("controller_id")
         .and_then(|v| v.parse::<usize>().ok());
-    let duration = form.get("duration_ms").and_then(|v| v.parse::<u64>().ok());
+    let duration = form
+        .get("duration_ms")
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|d| d.clamp(1, 5000));
     if let (Some(controller_id), Some(duration_ms)) = (id, duration) {
         let _ = app.command_tx.try_send(Command::Vibrate {
             controller_id,

@@ -91,6 +91,77 @@ fn effect_for_gamepad(id: GamepadId, gilrs: &mut Gilrs, kind: BaseEffectType) ->
     }
 }
 
+/// Start a one-shot manual vibration (Identify or Vibrate) on a controller.
+///
+/// Uses a dedicated temporary effect so the main rumble loop's `strong`
+/// effect is left untouched. Skips if the controller is already vibrating.
+fn start_manual_vibration(
+    gilrs: &mut Gilrs,
+    controller: &Controller,
+    web_state: &Arc<Mutex<WebState>>,
+    identify: bool,
+    duration_ms: u64,
+) {
+    let raw_id = usize::from(controller.id);
+
+    // Re-entrancy guard: skip if this controller is already vibrating.
+    let already_vibrating = web_state
+        .lock()
+        .unwrap()
+        .controllers
+        .iter()
+        .any(|c| c.id == raw_id && c.is_vibrating);
+    if already_vibrating {
+        info!(
+            "Skipping manual vibration for {}: already vibrating",
+            gilrs.gamepad(controller.id).name()
+        );
+        return;
+    }
+
+    // Dedicated temporary effect; leave the main `strong` effect untouched.
+    let Some(effect) = effect_for_gamepad(
+        controller.id,
+        gilrs,
+        BaseEffectType::Strong {
+            magnitude: u16::MAX,
+        },
+    ) else {
+        return;
+    };
+
+    {
+        let mut ws = web_state.lock().unwrap();
+        if let Some(wc) = ws.controllers.iter_mut().find(|c| c.id == raw_id) {
+            wc.is_vibrating = true;
+        }
+    }
+
+    let web_state = web_state.clone();
+    thread::spawn(move || {
+        if identify {
+            // Two short pulses.
+            let _ = effect.play();
+            thread::sleep(Duration::from_millis(100));
+            let _ = effect.stop();
+            thread::sleep(Duration::from_millis(100));
+            let _ = effect.play();
+            thread::sleep(Duration::from_millis(100));
+            let _ = effect.stop();
+        } else {
+            // Single pulse for the requested duration, then stop.
+            let _ = effect.play();
+            thread::sleep(Duration::from_millis(duration_ms));
+            let _ = effect.stop();
+        }
+        // Effect is dropped here, which stops it.
+        let mut ws = web_state.lock().unwrap();
+        if let Some(wc) = ws.controllers.iter_mut().find(|c| c.id == raw_id) {
+            wc.is_vibrating = false;
+        }
+    });
+}
+
 pub fn run(
     num_slots: usize,
     input_tx: Vec<Sender<SwitchInput>>,
@@ -314,76 +385,22 @@ pub fn run(
                 }
                 Command::Identify { controller_id } => {
                     if let Some(controller) = controller_by_raw_id(&controllers, controller_id) {
-                        if let Some(effects) = rumble_effects.get_mut(&controller.id) {
-                            // Mark as vibrating for the web UI, then spawn a
-                            // separate thread so input polling isn't blocked.
-                            {
-                                let mut ws = web_state.lock().unwrap();
-                                if let Some(wc) =
-                                    ws.controllers.iter_mut().find(|c| c.id == controller_id)
-                                {
-                                    wc.is_vibrating = true;
-                                }
-                            }
-                            let strong_effect = effects.strong.take();
-                            let web_state = web_state.clone();
-
-                            thread::spawn(move || {
-                                // Send a quick vibration pattern: two short pulses
-                                if let Some(effect) = strong_effect {
-                                    let _ = effect.play();
-                                    thread::sleep(Duration::from_millis(100));
-                                    let _ = effect.stop();
-                                    thread::sleep(Duration::from_millis(100));
-                                    let _ = effect.play();
-                                    thread::sleep(Duration::from_millis(100));
-                                    let _ = effect.stop();
-                                    // Note: effect is dropped here, which stops it
-                                }
-                                let mut ws = web_state.lock().unwrap();
-                                if let Some(wc) =
-                                    ws.controllers.iter_mut().find(|c| c.id == controller_id)
-                                {
-                                    wc.is_vibrating = false;
-                                }
-                            });
-                        }
+                        start_manual_vibration(&mut gilrs, controller, &web_state, true, 0);
                     }
                 }
                 Command::Vibrate {
                     controller_id,
                     duration_ms,
                 } => {
+                    let duration_ms = duration_ms.min(5000);
                     if let Some(controller) = controller_by_raw_id(&controllers, controller_id) {
-                        if let Some(effects) = rumble_effects.get_mut(&controller.id) {
-                            // Mark as vibrating for the web UI, then spawn a
-                            // separate thread so input polling isn't blocked.
-                            {
-                                let mut ws = web_state.lock().unwrap();
-                                if let Some(wc) =
-                                    ws.controllers.iter_mut().find(|c| c.id == controller_id)
-                                {
-                                    wc.is_vibrating = true;
-                                }
-                            }
-                            let strong_effect = effects.strong.take();
-                            let web_state = web_state.clone();
-
-                            thread::spawn(move || {
-                                if let Some(effect) = strong_effect {
-                                    let _ = effect.play();
-                                    thread::sleep(Duration::from_millis(duration_ms));
-                                    let _ = effect.stop();
-                                    // Note: effect is dropped here, which stops it
-                                }
-                                let mut ws = web_state.lock().unwrap();
-                                if let Some(wc) =
-                                    ws.controllers.iter_mut().find(|c| c.id == controller_id)
-                                {
-                                    wc.is_vibrating = false;
-                                }
-                            });
-                        }
+                        start_manual_vibration(
+                            &mut gilrs,
+                            controller,
+                            &web_state,
+                            false,
+                            duration_ms,
+                        );
                     }
                 }
             }
