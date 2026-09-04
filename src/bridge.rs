@@ -198,34 +198,40 @@ pub fn run(
 
     // Attach any already-connected pads.
     for gamepad_id in gilrs.gamepads().map(|(id, _)| id).collect::<Vec<_>>() {
-        {
+        let attached = {
             let mut ws = lock_mutex(&web_state);
             if ws.controllers.iter().any(|c| c.id == gamepad_id) {
-                continue;
-            }
-            match lowest_free_slot(&ws.controllers, num_slots) {
-                Some(slot) => {
-                    info!(
-                        "{} attached to slot {}",
-                        gilrs.gamepad(gamepad_id).name(),
-                        slot
-                    );
-                    ws.controllers.push(ControllerState {
-                        id: gamepad_id,
-                        slot: Some(slot),
-                        name: gilrs.gamepad(gamepad_id).name().to_string(),
-                        battery: 0,
-                        is_vibrating: false,
-                        input: None,
-                    });
+                false
+            } else {
+                match lowest_free_slot(&ws.controllers, num_slots) {
+                    Some(slot) => {
+                        info!(
+                            "{} attached to slot {}",
+                            gilrs.gamepad(gamepad_id).name(),
+                            slot
+                        );
+                        ws.controllers.push(ControllerState {
+                            id: gamepad_id,
+                            slot: Some(slot),
+                            name: gilrs.gamepad(gamepad_id).name().to_string(),
+                            battery: 0,
+                            is_vibrating: false,
+                            input: None,
+                        });
+                        true
+                    }
+                    None => {
+                        warn!(
+                            "{} not attached: no free slot",
+                            gilrs.gamepad(gamepad_id).name()
+                        );
+                        false
+                    }
                 }
-                None => {
-                    warn!(
-                        "{} not attached: no free slot",
-                        gilrs.gamepad(gamepad_id).name()
-                    );
-                }
             }
+        };
+        if !attached {
+            continue;
         }
         // Create both strong and weak effects for this gamepad.
         let strong = effect_for_gamepad(
@@ -351,9 +357,16 @@ pub fn run(
                     let mut ws = lock_mutex(&web_state);
                     match apply_remap(&mut ws.controllers, controller_id, new_slot, num_slots) {
                         RemapOutcome::Swapped { old_slot, new_slot } => {
+                            // The other controller now occupies the old slot.
+                            let other_id = ws
+                                .controllers
+                                .iter()
+                                .find(|c| c.slot == Some(old_slot))
+                                .map(|c| usize::from(c.id))
+                                .unwrap_or(0);
                             info!(
-                                "Swapped slots: controller {} (slot {}) <-> (slot {})",
-                                controller_id, new_slot, old_slot
+                                "Swapped slots: controller {} (slot {}) <-> controller {} (slot {})",
+                                controller_id, new_slot, other_id, old_slot
                             );
                             ws.status =
                                 format!("Swapped slot {} <-> slot {}", new_slot + 1, old_slot + 1);
