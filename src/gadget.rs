@@ -54,6 +54,13 @@ impl GadgetManager {
     /// Create the gadget with `n` HID functions and bring it online.
     pub fn create(&self, n: usize) -> std::io::Result<()> {
         let base = &self.root;
+        if self.root.exists() {
+            warn!(
+                "removing leftover gadget {} before creating a new one",
+                self.root.display()
+            );
+            self.destroy();
+        }
         fs::create_dir_all(base)?;
 
         write_file(&base.join("idVendor"), "0x057e")?;
