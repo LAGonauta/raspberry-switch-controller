@@ -23,8 +23,8 @@ use log::{error, info, warn};
 
 use crate::mapping::Mapping;
 use crate::models::{
-    AppState, Command, Controller, Rumble, SwitchInput, WebController, WebState, XboxInput,
-    NEUTRAL_INPUT,
+    apply_remap, AppState, Command, ControllerState, RemapOutcome, Rumble, SwitchInput, WebState,
+    XboxInput, NEUTRAL_INPUT,
 };
 
 /// Convert battery percentage (0-100) to Switch 5-level scale (0-4).
@@ -44,20 +44,12 @@ fn percentage_to_level(pct: u8) -> u8 {
 
 const RUMBLE_MAX_MAGNITUDE: u16 = u16::MAX;
 
-/// Find a Controller by its numeric (usize) gilrs id as used by the web UI.
-fn controller_by_raw_id(controllers: &[Controller], raw: usize) -> Option<&Controller> {
-    controllers.iter().find(|c| usize::from(c.id) == raw)
+fn slot_occupied(controllers: &[ControllerState], slot: usize) -> bool {
+    controllers.iter().any(|c| c.slot == Some(slot))
 }
 
-/// Copy slot assignments from the bridge's source of truth into the web state.
-fn sync_web_slots(web_state: &Arc<Mutex<WebState>>, controllers: &[Controller]) {
-    let mut ws = web_state.lock().unwrap();
-    for wc in &mut ws.controllers {
-        wc.slot = controllers
-            .iter()
-            .find(|c| usize::from(c.id) == wc.id)
-            .map(|c| c.slot);
-    }
+fn lowest_free_slot(controllers: &[ControllerState], num_slots: usize) -> Option<usize> {
+    (0..num_slots).find(|&s| !slot_occupied(controllers, s))
 }
 
 struct RumbleEffects {
@@ -97,31 +89,34 @@ fn effect_for_gamepad(id: GamepadId, gilrs: &mut Gilrs, kind: BaseEffectType) ->
 /// effect is left untouched. Skips if the controller is already vibrating.
 fn start_manual_vibration(
     gilrs: &mut Gilrs,
-    controller: &Controller,
+    controller_id: usize, // raw numeric id from the web
     web_state: &Arc<Mutex<WebState>>,
     identify: bool,
     duration_ms: u64,
 ) {
-    let raw_id = usize::from(controller.id);
-
     // Re-entrancy guard: skip if this controller is already vibrating.
-    let already_vibrating = web_state
-        .lock()
-        .unwrap()
-        .controllers
-        .iter()
-        .any(|c| c.id == raw_id && c.is_vibrating);
-    if already_vibrating {
-        info!(
-            "Skipping manual vibration for {}: already vibrating",
-            gilrs.gamepad(controller.id).name()
-        );
-        return;
-    }
+    let gamepad_id = {
+        let ws = web_state.lock().unwrap();
+        let Some(controller) = ws
+            .controllers
+            .iter()
+            .find(|c| usize::from(c.id) == controller_id)
+        else {
+            return;
+        };
+        if controller.is_vibrating {
+            info!(
+                "Skipping manual vibration for {}: already vibrating",
+                gilrs.gamepad(controller.id).name()
+            );
+            return;
+        }
+        controller.id
+    };
 
     // Dedicated temporary effect; leave the main `strong` effect untouched.
     let Some(effect) = effect_for_gamepad(
-        controller.id,
+        gamepad_id,
         gilrs,
         BaseEffectType::Strong {
             magnitude: u16::MAX,
@@ -132,8 +127,12 @@ fn start_manual_vibration(
 
     {
         let mut ws = web_state.lock().unwrap();
-        if let Some(wc) = ws.controllers.iter_mut().find(|c| c.id == raw_id) {
-            wc.is_vibrating = true;
+        if let Some(controller) = ws
+            .controllers
+            .iter_mut()
+            .find(|c| usize::from(c.id) == controller_id)
+        {
+            controller.is_vibrating = true;
         }
     }
 
@@ -156,8 +155,12 @@ fn start_manual_vibration(
         }
         // Effect is dropped here, which stops it.
         let mut ws = web_state.lock().unwrap();
-        if let Some(wc) = ws.controllers.iter_mut().find(|c| c.id == raw_id) {
-            wc.is_vibrating = false;
+        if let Some(controller) = ws
+            .controllers
+            .iter_mut()
+            .find(|c| usize::from(c.id) == controller_id)
+        {
+            controller.is_vibrating = false;
         }
     });
 }
@@ -180,61 +183,59 @@ pub fn run(
     };
 
     let mapping = Mapping::new();
-    let mut slot_occupied = vec![false; num_slots];
-    let mut controllers: Vec<Controller> = Vec::new();
     let mut rumble_effects: HashMap<GamepadId, RumbleEffects> = HashMap::new();
 
     // Attach any already-connected pads.
     for gamepad_id in gilrs.gamepads().map(|(id, _)| id).collect::<Vec<_>>() {
-        if let Some(slot) = lowest_free_slot(&slot_occupied) {
-            info!(
-                "{} attached to slot {}",
-                gilrs.gamepad(gamepad_id).name(),
-                slot
-            );
-            slot_occupied[slot] = true;
-            controllers.push(Controller {
-                id: gamepad_id,
-                slot,
-            });
-            // Mirror into web state.
-            {
-                let mut ws = web_state.lock().unwrap();
-                ws.controllers.push(WebController {
-                    id: usize::from(gamepad_id),
-                    name: gilrs.gamepad(gamepad_id).name().to_string(),
-                    slot: Some(slot),
-                    battery: 0,
-                    is_vibrating: false,
-                });
-                ws.inputs.push(None);
+        {
+            let mut ws = web_state.lock().unwrap();
+            if ws.controllers.iter().any(|c| c.id == gamepad_id) {
+                continue;
             }
-            // Create both strong and weak effects for this gamepad.
-            let strong = effect_for_gamepad(
-                gamepad_id,
-                &mut gilrs,
-                BaseEffectType::Strong { magnitude: 0 },
-            );
-            let weak = effect_for_gamepad(
-                gamepad_id,
-                &mut gilrs,
-                BaseEffectType::Weak { magnitude: 0 },
-            );
-            rumble_effects.insert(
-                gamepad_id,
-                RumbleEffects {
-                    strong,
-                    weak,
-                    strong_mag: 0,
-                    weak_mag: 0,
-                },
-            );
-        } else {
-            warn!(
-                "{} not attached: no free slot",
-                gilrs.gamepad(gamepad_id).name()
-            );
+            match lowest_free_slot(&ws.controllers, num_slots) {
+                Some(slot) => {
+                    info!(
+                        "{} attached to slot {}",
+                        gilrs.gamepad(gamepad_id).name(),
+                        slot
+                    );
+                    ws.controllers.push(ControllerState {
+                        id: gamepad_id,
+                        slot: Some(slot),
+                        name: gilrs.gamepad(gamepad_id).name().to_string(),
+                        battery: 0,
+                        is_vibrating: false,
+                        input: None,
+                    });
+                }
+                None => {
+                    warn!(
+                        "{} not attached: no free slot",
+                        gilrs.gamepad(gamepad_id).name()
+                    );
+                }
+            }
         }
+        // Create both strong and weak effects for this gamepad.
+        let strong = effect_for_gamepad(
+            gamepad_id,
+            &mut gilrs,
+            BaseEffectType::Strong { magnitude: 0 },
+        );
+        let weak = effect_for_gamepad(
+            gamepad_id,
+            &mut gilrs,
+            BaseEffectType::Weak { magnitude: 0 },
+        );
+        rumble_effects.insert(
+            gamepad_id,
+            RumbleEffects {
+                strong,
+                weak,
+                strong_mag: 0,
+                weak_mag: 0,
+            },
+        );
     }
 
     let clock = clock::DefaultClock::default();
@@ -251,8 +252,15 @@ pub fn run(
 
         // Apply rumble from gadget slots.
         while let Ok(rumble) = rumble_rx.try_recv() {
-            if let Some(controller) = controllers.iter().find(|c| c.slot == rumble.slot) {
-                if let Some(effects) = rumble_effects.get_mut(&controller.id) {
+            let controller_id = web_state
+                .lock()
+                .unwrap()
+                .controllers
+                .iter()
+                .find(|c| c.slot == Some(rumble.slot))
+                .map(|c| c.id);
+            if let Some(controller_id) = controller_id {
+                if let Some(effects) = rumble_effects.get_mut(&controller_id) {
                     // Map Switch left motor -> Xbox strong motor (low frequency, heavy)
                     // Map Switch right motor -> Xbox weak motor (high frequency, light)
                     let strong_mag =
@@ -265,7 +273,7 @@ pub fn run(
                             let _ = old.stop();
                         }
                         match effect_for_gamepad(
-                            controller.id,
+                            controller_id,
                             &mut gilrs,
                             BaseEffectType::Strong {
                                 magnitude: strong_mag,
@@ -288,7 +296,7 @@ pub fn run(
                             let _ = old.stop();
                         }
                         match effect_for_gamepad(
-                            controller.id,
+                            controller_id,
                             &mut gilrs,
                             BaseEffectType::Weak {
                                 magnitude: weak_mag,
@@ -331,77 +339,54 @@ pub fn run(
                     controller_id,
                     new_slot,
                 } => {
-                    if new_slot >= num_slots {
-                        warn!("Invalid slot {} for remap", new_slot);
-                        continue;
-                    }
-                    let Some(old_slot) = controllers
-                        .iter()
-                        .find(|c| usize::from(c.id) == controller_id)
-                        .map(|c| c.slot)
-                    else {
-                        continue;
-                    };
-                    if old_slot == new_slot {
-                        continue;
-                    }
-                    // Check if new slot is occupied
-                    if slot_occupied[new_slot] {
-                        // Find what's in the new slot and swap
-                        if let Some(other) = controllers.iter_mut().find(|c| c.slot == new_slot) {
-                            let other_id = usize::from(other.id);
-                            other.slot = old_slot;
-                            slot_occupied[old_slot] = true;
+                    let mut ws = web_state.lock().unwrap();
+                    match apply_remap(&mut ws.controllers, controller_id, new_slot, num_slots) {
+                        RemapOutcome::Swapped { old_slot, new_slot } => {
                             info!(
-                                "Swapped slots: controller {} (slot {}) <-> controller {} (slot {})",
-                                controller_id, new_slot, other_id, old_slot
+                                "Swapped slots: controller {} (slot {}) <-> (slot {})",
+                                controller_id, new_slot, old_slot
                             );
-                            let mut ws = web_state.lock().unwrap();
-                            ws.status =
-                                format!("Swapped slot {} <-> slot {}", new_slot + 1, old_slot + 1);
+                            ws.status = format!(
+                                "Swapped slot {} <-> slot {}",
+                                new_slot + 1,
+                                old_slot + 1
+                            );
                         }
-                    } else {
-                        slot_occupied[old_slot] = false;
-                        slot_occupied[new_slot] = true;
-                        info!(
-                            "Remapped controller {} from slot {} to slot {}",
-                            controller_id, old_slot, new_slot
-                        );
-                        let mut ws = web_state.lock().unwrap();
-                        ws.status = format!(
-                            "Remapped controller {} to slot {}",
-                            controller_id,
-                            new_slot + 1
-                        );
+                        RemapOutcome::Moved => {
+                            info!(
+                                "Remapped controller {} to slot {}",
+                                controller_id,
+                                new_slot + 1
+                            );
+                            ws.status = format!(
+                                "Remapped controller {} to slot {}",
+                                controller_id,
+                                new_slot + 1
+                            );
+                        }
+                        RemapOutcome::InvalidSlot => {
+                            warn!("Invalid slot {} for remap", new_slot);
+                        }
+                        RemapOutcome::SameSlot => {}
+                        RemapOutcome::NotFound => {
+                            warn!("Controller {} not found for remap", controller_id);
+                        }
                     }
-                    // Update the controller's slot
-                    if let Some(controller) = controllers
-                        .iter_mut()
-                        .find(|c| usize::from(c.id) == controller_id)
-                    {
-                        controller.slot = new_slot;
-                    }
-                    sync_web_slots(&web_state, &controllers);
                 }
                 Command::Identify { controller_id } => {
-                    if let Some(controller) = controller_by_raw_id(&controllers, controller_id) {
-                        start_manual_vibration(&mut gilrs, controller, &web_state, true, 0);
-                    }
+                    start_manual_vibration(&mut gilrs, controller_id, &web_state, true, 0);
                 }
                 Command::Vibrate {
                     controller_id,
                     duration_ms,
                 } => {
-                    let duration_ms = duration_ms.min(5000);
-                    if let Some(controller) = controller_by_raw_id(&controllers, controller_id) {
-                        start_manual_vibration(
-                            &mut gilrs,
-                            controller,
-                            &web_state,
-                            false,
-                            duration_ms,
-                        );
-                    }
+                    start_manual_vibration(
+                        &mut gilrs,
+                        controller_id,
+                        &web_state,
+                        false,
+                        duration_ms.min(5000),
+                    );
                 }
             }
         }
@@ -410,73 +395,74 @@ pub fn run(
         while let Some(event) = gilrs.next_event() {
             match event.event {
                 gilrs::EventType::Connected => {
-                    if controllers.iter().any(|c| c.id == event.id) {
-                        continue;
-                    }
-                    match lowest_free_slot(&slot_occupied) {
-                        Some(slot) => {
-                            let name = gilrs.gamepad(event.id).name().to_string();
-                            info!("{} connected, assigned slot {}", name, slot);
-                            slot_occupied[slot] = true;
-                            controllers.push(Controller { id: event.id, slot });
-                            {
-                                let mut ws = web_state.lock().unwrap();
-                                ws.controllers.push(WebController {
-                                    id: usize::from(event.id),
-                                    name: name.clone(),
-                                    slot: Some(slot),
-                                    battery: 0,
-                                    is_vibrating: false,
-                                });
-                                ws.inputs.push(None);
-                                ws.status = format!("{} connected (slot {})", name, slot + 1);
-                            }
-                            // Create both strong and weak effects for this gamepad.
-                            let strong = effect_for_gamepad(
-                                event.id,
-                                &mut gilrs,
-                                BaseEffectType::Strong { magnitude: 0 },
-                            );
-                            let weak = effect_for_gamepad(
-                                event.id,
-                                &mut gilrs,
-                                BaseEffectType::Weak { magnitude: 0 },
-                            );
-                            rumble_effects.insert(
-                                event.id,
-                                RumbleEffects {
-                                    strong,
-                                    weak,
-                                    strong_mag: 0,
-                                    weak_mag: 0,
-                                },
-                            );
+                    let name = gilrs.gamepad(event.id).name().to_string();
+                    {
+                        let mut ws = web_state.lock().unwrap();
+                        if ws.controllers.iter().any(|c| c.id == event.id) {
+                            continue;
                         }
-                        None => warn!(
-                            "{} connected but no free slot",
-                            gilrs.gamepad(event.id).name()
-                        ),
+                        let Some(slot) = lowest_free_slot(&ws.controllers, num_slots) else {
+                            warn!(
+                                "{} connected but no free slot",
+                                gilrs.gamepad(event.id).name()
+                            );
+                            continue;
+                        };
+                        info!("{} connected, assigned slot {}", name, slot);
+                        ws.controllers.push(ControllerState {
+                            id: event.id,
+                            slot: Some(slot),
+                            name: name.clone(),
+                            battery: 0,
+                            is_vibrating: false,
+                            input: None,
+                        });
+                        ws.status = format!("{} connected (slot {})", name, slot + 1);
                     }
+                    // Create both strong and weak effects for this gamepad.
+                    let strong = effect_for_gamepad(
+                        event.id,
+                        &mut gilrs,
+                        BaseEffectType::Strong { magnitude: 0 },
+                    );
+                    let weak = effect_for_gamepad(
+                        event.id,
+                        &mut gilrs,
+                        BaseEffectType::Weak { magnitude: 0 },
+                    );
+                    rumble_effects.insert(
+                        event.id,
+                        RumbleEffects {
+                            strong,
+                            weak,
+                            strong_mag: 0,
+                            weak_mag: 0,
+                        },
+                    );
                 }
                 gilrs::EventType::Disconnected => {
-                    if let Some(pos) = controllers.iter().position(|c| c.id == event.id) {
-                        let controller = controllers.remove(pos);
-                        let name = gilrs.gamepad(event.id).name().to_string();
-                        info!("{} disconnected, slot {} freed", name, controller.slot);
-                        slot_occupied[controller.slot] = false;
-                        if let Some(mut effects) = rumble_effects.remove(&event.id) {
-                            if let Some(effect) = effects.strong.take() {
-                                let _ = effect.stop();
-                            }
-                            if let Some(effect) = effects.weak.take() {
-                                let _ = effect.stop();
-                            }
+                    let name = gilrs.gamepad(event.id).name().to_string();
+                    let freed_slot = {
+                        let mut ws = web_state.lock().unwrap();
+                        let Some(pos) = ws.controllers.iter().position(|c| c.id == event.id) else {
+                            continue;
+                        };
+                        let controller = ws.controllers.remove(pos);
+                        let freed_slot = controller.slot;
+                        ws.status = format!("{} disconnected", name);
+                        freed_slot
+                    };
+                    if let Some(freed_slot) = freed_slot {
+                        info!("{} disconnected, slot {} freed", name, freed_slot);
+                    } else {
+                        info!("{} disconnected", name);
+                    }
+                    if let Some(mut effects) = rumble_effects.remove(&event.id) {
+                        if let Some(effect) = effects.strong.take() {
+                            let _ = effect.stop();
                         }
-                        {
-                            let mut ws = web_state.lock().unwrap();
-                            ws.controllers.remove(pos);
-                            ws.inputs.remove(pos);
-                            ws.status = format!("{} disconnected", name);
+                        if let Some(effect) = effects.weak.take() {
+                            let _ = effect.stop();
                         }
                     }
                 }
@@ -490,10 +476,9 @@ pub fn run(
         // a stalled slot thread can never block the web UI.
         let mut ws_guard = web_state.lock().unwrap();
         let mut inputs = Vec::with_capacity(num_slots);
-        for (slot, _tx) in input_tx.iter().enumerate().take(num_slots) {
-            let input = match controllers.iter().position(|c| c.slot == slot) {
-                Some(idx) => {
-                    let controller = &controllers[idx];
+        for slot in 0..num_slots {
+            let input = match ws_guard.controllers.iter_mut().find(|c| c.slot == Some(slot)) {
+                Some(controller) => {
                     let gamepad = gilrs.gamepad(controller.id);
                     let mut inp = mapping.poll(&gamepad);
                     // Set battery level from controller's power info
@@ -506,13 +491,9 @@ pub fn run(
                     };
                     inp.battery = battery;
                     // Mirror the latest raw Xbox state into the web UI.
-                    if let Some(wc) = ws_guard.controllers.get_mut(idx) {
-                        wc.battery = battery;
-                        wc.name = gamepad.name().to_string();
-                    }
-                    if let Some(slot_inputs) = ws_guard.inputs.get_mut(idx) {
-                        *slot_inputs = Some(XboxInput::from_gamepad(&gamepad));
-                    }
+                    controller.battery = battery;
+                    controller.name = gamepad.name().to_string();
+                    controller.input = Some(XboxInput::from_gamepad(&gamepad));
                     inp
                 }
                 None => NEUTRAL_INPUT,
@@ -539,10 +520,6 @@ pub fn run(
             thread::sleep(e.wait_time_from(clock.now()));
         }
     }
-}
-
-fn lowest_free_slot(slot_occupied: &[bool]) -> Option<usize> {
-    slot_occupied.iter().position(|&occupied| !occupied)
 }
 
 #[cfg(test)]

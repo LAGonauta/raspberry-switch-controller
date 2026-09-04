@@ -27,7 +27,7 @@ use maud::{html, Markup};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::models::{AppState, Command, Stick, WebController, WebState, XboxInput};
+use crate::models::{AppState, Command, ControllerState, Stick, WebState, XboxInput};
 
 const WEB_HTMX: &str = include_str!("../web/static/htmx.min.js");
 const WEB_SSE: &str = include_str!("../web/static/htmx-ext-sse.min.js");
@@ -185,15 +185,14 @@ async fn sse_handler(State(app): State<Arc<WebApp>>) -> impl IntoResponse {
                     Ok(guard) => guard,
                     Err(_) => break 'sse,
                 };
-                let ids: Vec<usize> = ws.controllers.iter().map(|c| c.id).collect();
+                let ids: Vec<usize> = ws.controllers.iter().map(|c| usize::from(c.id)).collect();
                 let readouts: HashMap<usize, String> = ws
                     .controllers
                     .iter()
-                    .enumerate()
-                    .map(|(i, c)| {
+                    .map(|c| {
                         (
-                            c.id,
-                            pad_readout(c, ws.inputs.get(i).and_then(|o| o.as_ref())).into_string(),
+                            usize::from(c.id),
+                            pad_readout(c, c.input.as_ref()).into_string(),
                         )
                     })
                     .collect();
@@ -338,26 +337,26 @@ fn pads_full(ws: &WebState, num_slots: usize) -> Markup {
         @if ws.controllers.is_empty() {
             div.empty-pad { "No Xbox controllers connected." }
         } @else {
-            @for (i, c) in ws.controllers.iter().enumerate() {
-                (pad_card(c, ws.inputs.get(i).and_then(|o| o.as_ref()), num_slots))
+            @for c in ws.controllers.iter() {
+                (pad_card(c, c.input.as_ref(), num_slots))
             }
         }
     }
 }
 
-fn pad_card(c: &WebController, input: Option<&XboxInput>, num_slots: usize) -> Markup {
+fn pad_card(c: &ControllerState, input: Option<&XboxInput>, num_slots: usize) -> Markup {
     html! {
-        div.pad-card id=(format!("card-{}", c.id)) {
-            div.pad-readout sse-swap=(format!("pad-{}", c.id)) {
+        div.pad-card id=(format!("card-{}", usize::from(c.id))) {
+            div.pad-readout sse-swap=(format!("pad-{}", usize::from(c.id))) {
                 (pad_readout(c, input))
             }
             div.pad-controls {
                 form hx-post="/actions/identify" hx-target="#overview" hx-swap="innerHTML" {
-                    input type="hidden" name="controller_id" value=(c.id);
+                    input type="hidden" name="controller_id" value=(usize::from(c.id));
                     button type="submit" { "Identify" }
                 }
                 form hx-post="/actions/vibrate" hx-target="#overview" hx-swap="innerHTML" {
-                    input type="hidden" name="controller_id" value=(c.id);
+                    input type="hidden" name="controller_id" value=(usize::from(c.id));
                     select name="duration_ms" {
                         option value="200" { "200ms" }
                         option value="500" selected { "500ms" }
@@ -367,7 +366,7 @@ fn pad_card(c: &WebController, input: Option<&XboxInput>, num_slots: usize) -> M
                     button type="submit" { "Vibrate" }
                 }
                 form hx-post="/actions/remap" hx-target="#overview" hx-swap="innerHTML" {
-                    input type="hidden" name="controller_id" value=(c.id);
+                    input type="hidden" name="controller_id" value=(usize::from(c.id));
                     select name="new_slot" {
                         @for slot in 0..num_slots {
                             @if Some(slot) == c.slot {
@@ -387,7 +386,7 @@ fn pad_card(c: &WebController, input: Option<&XboxInput>, num_slots: usize) -> M
 /// Inner content of a pad card readout. This is the part swapped by SSE at
 /// ~30Hz; the controls (vibrate/remap) live outside it so client state
 /// (Alpine, form values) survives the updates.
-fn pad_readout(c: &WebController, input: Option<&XboxInput>) -> Markup {
+fn pad_readout(c: &ControllerState, input: Option<&XboxInput>) -> Markup {
     let inp = input.copied().unwrap_or_default();
     html! {
         div.pad-head {

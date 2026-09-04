@@ -83,10 +83,19 @@ pub struct Rumble {
     pub right: u8,
 }
 
-/// A live mapping from a physical Xbox gamepad to one Switch slot.
-pub struct Controller {
+/// A live controller. Single source of truth: maintained by the bridge thread,
+/// rendered by the web thread (which never mutates it).
+#[derive(Clone, Debug)]
+pub struct ControllerState {
     pub id: GamepadId,
-    pub slot: usize,
+    /// Assigned Switch slot (None = not assigned).
+    pub slot: Option<usize>,
+    pub name: String,
+    /// Raw Switch battery byte (see `SwitchInput::battery`).
+    pub battery: u8,
+    pub is_vibrating: bool,
+    /// Latest raw Xbox input snapshot (web tester page).
+    pub input: Option<XboxInput>,
 }
 
 /// Raw Xbox input snapshot used by the web tester page (Xbox-native labels).
@@ -119,26 +128,51 @@ pub struct XboxInput {
     pub right_stick: Stick,
 }
 
-/// A controller as displayed by the web UI.
-#[derive(Clone, Debug)]
-pub struct WebController {
-    /// Numeric gilrs gamepad id (`usize::from(GamepadId)`).
-    pub id: usize,
-    pub name: String,
-    pub slot: Option<usize>,
-    /// Raw Switch battery byte from `SwitchInput` (see `SwitchInput::battery`).
-    pub battery: u8,
-    pub is_vibrating: bool,
-}
-
 /// Read-only snapshot the web layer renders from. Maintained by the bridge
 /// thread; the web thread never mutates it.
 #[derive(Clone, Debug, Default)]
 pub struct WebState {
-    pub controllers: Vec<WebController>,
-    /// Latest raw Xbox input per controller, aligned by index with `controllers`.
-    pub inputs: Vec<Option<XboxInput>>,
+    pub controllers: Vec<ControllerState>,
     pub status: String,
+}
+
+/// Result of a slot-remap attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemapOutcome {
+    NotFound,
+    InvalidSlot,
+    SameSlot,
+    Moved,
+    Swapped { old_slot: usize, new_slot: usize },
+}
+
+/// Apply a remap of `controller_id` (numeric gilrs id) to `new_slot`.
+/// Pure function over the controllers vec (single source of truth).
+pub fn apply_remap(
+    controllers: &mut [ControllerState],
+    controller_id: usize,
+    new_slot: usize,
+    num_slots: usize,
+) -> RemapOutcome {
+    if new_slot >= num_slots {
+        return RemapOutcome::InvalidSlot;
+    }
+    let Some(idx) = controllers.iter().position(|c| usize::from(c.id) == controller_id) else {
+        return RemapOutcome::NotFound;
+    };
+    let Some(old_slot) = controllers[idx].slot else {
+        return RemapOutcome::NotFound; // not assigned to a slot
+    };
+    if old_slot == new_slot {
+        return RemapOutcome::SameSlot;
+    }
+    if let Some(other_idx) = controllers.iter().position(|c| c.slot == Some(new_slot)) {
+        controllers[other_idx].slot = Some(old_slot);
+        controllers[idx].slot = Some(new_slot);
+        return RemapOutcome::Swapped { old_slot, new_slot };
+    }
+    controllers[idx].slot = Some(new_slot);
+    RemapOutcome::Moved
 }
 
 /// Commands sent from the web UI to the bridge thread.
