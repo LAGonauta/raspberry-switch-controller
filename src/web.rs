@@ -398,34 +398,40 @@ fn pad_readout(c: &ControllerState, input: Option<&XboxInput>) -> Markup {
             }
         }
         div.pad-body {
-            div.sticks {
-                (stick("L", inp.left_stick, inp.left_stick_press))
-                (stick("R", inp.right_stick, inp.right_stick_press))
+            div.bumpers-row {
+                div.bumper-group.bumper-left {
+                    (trigger("LT", inp.lt, inp.lt_value))
+                    (bumper("LB", inp.lb))
+                }
+                div.center {
+                    (center_button("View", inp.view))
+                    (xbox_button(inp.xbox))
+                    (center_button("Menu", inp.menu))
+                }
+                div.bumper-group.bumper-right {
+                    (trigger("RT", inp.rt, inp.rt_value))
+                    (bumper("RB", inp.rb))
+                }
             }
-            div.face {
-                (pad_button("x", "X", inp.x))
-                (pad_button("y", "Y", inp.y))
-                (pad_button("b", "B", inp.b))
-                (pad_button("a", "A", inp.a))
-            }
-            div.bumpers {
-                (bumper("LB", inp.lb))
-                (bumper("RB", inp.rb))
-            }
-            div.center {
-                (center_button("View", inp.view))
-                (xbox_button(inp.xbox))
-                (center_button("Menu", inp.menu))
-            }
-            div.dpad {
-                (dpad_button("dpad-up", "▲", inp.dpad_up))
-                (dpad_button("dpad-left", "◀", inp.dpad_left))
-                (dpad_button("dpad-right", "▶", inp.dpad_right))
-                (dpad_button("dpad-down", "▼", inp.dpad_down))
-            }
-            div.triggers {
-                (trigger("LT", inp.lt, inp.lt_value))
-                (trigger("RT", inp.rt, inp.rt_value))
+            div.pad-main {
+                div.cluster {
+                    div.dpad {
+                        (dpad_button("dpad-up", "▲", inp.dpad_up))
+                        (dpad_button("dpad-left", "◀", inp.dpad_left))
+                        (dpad_button("dpad-right", "▶", inp.dpad_right))
+                        (dpad_button("dpad-down", "▼", inp.dpad_down))
+                    }
+                    (stick("L", inp.left_stick, inp.left_stick_press))
+                }
+                div.cluster {
+                    (stick("R", inp.right_stick, inp.right_stick_press))
+                    div.face {
+                        (pad_button("x", "X", inp.x))
+                        (pad_button("y", "Y", inp.y))
+                        (pad_button("b", "B", inp.b))
+                        (pad_button("a", "A", inp.a))
+                    }
+                }
             }
         }
     }

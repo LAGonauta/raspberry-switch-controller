@@ -74,7 +74,26 @@ ol.slot-list li { padding: 2px 0; }
   border-radius: 999px;
 }
 .pad-badge.vibrating { background: #f59e0b; color: #fff; }
-.pad-body { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; }
+.pad-body { display: flex; flex-direction: column; gap: 14px; }
+.bumpers-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bumper-group { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.pad-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.cluster { display: flex; align-items: flex-start; gap: 16px; }
+@media (max-width: 480px) {
+  .pad-main { justify-content: center; }
+  .cluster { flex-direction: column; align-items: center; }
+}
 .pad-btn {
   width: 44px;
   height: 44px;
