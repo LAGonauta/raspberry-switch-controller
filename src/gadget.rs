@@ -201,7 +201,7 @@ pub fn run_slot(
             let _ = guard.write_all(&packet);
         }
     }
-    switch_proto::hdr_reset_slot(slot);
+    let hdr = Arc::new(Mutex::new(switch_proto::HdrState::new()));
 
     let count = Arc::new(AtomicU8::new(0));
     let input_active = Arc::new(AtomicBool::new(false));
@@ -221,6 +221,7 @@ pub fn run_slot(
         let count = count.clone();
         let input_active = input_active.clone();
         let report_mode = report_mode.clone();
+        let hdr = hdr.clone();
         let mut buf = [0u8; READ_BUF_LEN];
         thread::spawn(move || {
             let mut read_errors: u32 = 0;
@@ -236,7 +237,7 @@ pub fn run_slot(
                         }
                         input_active.store(false, Ordering::Relaxed);
                         report_mode.store(0x00, Ordering::Relaxed);
-                        switch_proto::hdr_reset_slot(slot);
+                        hdr.lock().unwrap().reset();
                         thread::sleep(Duration::from_millis(50));
                         continue;
                     }
@@ -251,7 +252,7 @@ pub fn run_slot(
                         }
                         input_active.store(false, Ordering::Relaxed);
                         report_mode.store(0x00, Ordering::Relaxed);
-                        switch_proto::hdr_reset_slot(slot);
+                        hdr.lock().unwrap().reset();
                         thread::sleep(Duration::from_millis(50));
                         continue;
                     }
@@ -332,7 +333,9 @@ pub fn run_slot(
                     }
                     // Rumble-only output report. (0x11 is MCU/NFC data, not rumble.)
                     0x10 => {
-                        if let Some((left, right)) = switch_proto::decode_rumble(report, slot) {
+                        if let Some((left, right)) =
+                            switch_proto::decode_rumble(report, &mut hdr.lock().unwrap())
+                        {
                             let _ = rumble_tx.try_send(Rumble { slot, left, right });
                         }
                     }
@@ -367,7 +370,7 @@ pub fn run_slot(
                 }
                 input_active.store(false, Ordering::Relaxed);
                 report_mode.store(0x00, Ordering::Relaxed);
-                switch_proto::hdr_reset_slot(slot);
+                hdr.lock().unwrap().reset();
                 thread::sleep(Duration::from_millis(50));
             }
         }

@@ -215,12 +215,26 @@ struct HdrBands {
     hi: i16, // high-band amplitude
 }
 
-/// Per-slot, per-motor (0=left, 1=right) state.
-/// Static mutable because each slot is handled by a single thread.
-static mut HDR_STATE: [[HdrBands; 2]; 8] = [[HdrBands {
-    lo: HDR_AMP_OFF,
-    hi: HDR_AMP_OFF,
-}; 2]; 8];
+/// Per-slot rumble decode state (one per slot, owned by the slot task).
+pub struct HdrState {
+    bands: [HdrBands; 2],
+}
+
+impl HdrState {
+    pub fn new() -> Self {
+        Self {
+            bands: [HdrBands {
+                lo: HDR_AMP_OFF,
+                hi: HDR_AMP_OFF,
+            }; 2],
+        }
+    }
+
+    /// Reset both motors to silence (call on connection loss).
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
 
 /// Amplitude lookup table: log2 units (-256..0) -> linear amplitude (0..1003).
 /// Built once at startup.
@@ -273,10 +287,10 @@ fn hdr_field(w: u32, shift: u8, width: u8) -> u8 {
 
 /// Decode one motor's 4 rumble bytes, advancing its state.
 /// Returns the peak linear amplitude (0..1003) across all updates in this frame.
-fn hdr_decode(slot: usize, motor: usize, bytes: &[u8; 4]) -> u16 {
+fn hdr_decode(state: &mut HdrState, motor: usize, bytes: &[u8; 4]) -> u16 {
     let w = u32::from_le_bytes(*bytes);
     let mode = hdr_field(w, 30, 2);
-    let state = unsafe { &mut HDR_STATE[slot][motor] };
+    let state = &mut state.bands[motor];
     let levels = hdr_build_levels();
     let mut peak = 0u16;
 
@@ -385,26 +399,16 @@ fn hdr_decode(slot: usize, motor: usize, bytes: &[u8; 4]) -> u16 {
     peak
 }
 
-/// Reset rumble state for a slot (call on disconnect).
-pub fn hdr_reset_slot(slot: usize) {
-    unsafe {
-        HDR_STATE[slot] = [HdrBands {
-            lo: HDR_AMP_OFF,
-            hi: HDR_AMP_OFF,
-        }; 2];
-    }
-}
-
 /// Decode the 8-byte rumble payload of a `0x10` (rumble-only) output report
 /// into left/right amplitudes 0..=255. Layout per
 /// hid-nintendo `struct joycon_rumble_output`: [0] = report id,
 /// [1] = packet counter, [2..6] = left actuator, [6..10] = right actuator.
-pub fn decode_rumble(report: &[u8], slot: usize) -> Option<(u8, u8)> {
+pub fn decode_rumble(report: &[u8], state: &mut HdrState) -> Option<(u8, u8)> {
     if report.len() < 10 || report[0] != 0x10 {
         return None;
     }
-    let left = hdr_decode(slot, 0, report[2..6].try_into().unwrap());
-    let right = hdr_decode(slot, 1, report[6..10].try_into().unwrap());
+    let left = hdr_decode(state, 0, report[2..6].try_into().unwrap());
+    let right = hdr_decode(state, 1, report[6..10].try_into().unwrap());
     let left_mag = (left as u32 * 255 / RUMBLE_AMP_MAX as u32) as u8;
     let right_mag = (right as u32 * 255 / RUMBLE_AMP_MAX as u32) as u8;
     Some((left_mag, right_mag))
