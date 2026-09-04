@@ -24,10 +24,12 @@ impl Mapping {
     pub fn poll(&self, gamepad: &Gamepad) -> SwitchInput {
         SwitchInput {
             // Buttons (A/B/X/Y swapped, following xboxjoystick.go).
+            // gilrs Button::North = evdev 0x133 = physical Xbox X and
+            // Button::West = evdev 0x134 = physical Xbox Y (xone/xpad).
             b: gamepad.is_pressed(Button::South), // Xbox A -> Switch B
             a: gamepad.is_pressed(Button::East),  // Xbox B -> Switch A
-            y: gamepad.is_pressed(Button::West),  // Xbox X -> Switch Y
-            x: gamepad.is_pressed(Button::North), // Xbox Y -> Switch X
+            y: gamepad.is_pressed(Button::North), // Xbox X -> Switch Y
+            x: gamepad.is_pressed(Button::West),  // Xbox Y -> Switch X
             l: gamepad.is_pressed(Button::LeftTrigger),
             r: gamepad.is_pressed(Button::RightTrigger),
             minus: gamepad.is_pressed(Button::Select),
@@ -44,14 +46,15 @@ impl Mapping {
             // Triggers: axis value above threshold OR trigger button pressed.
             zl: self.trigger_pressed(gamepad, Axis::LeftZ, Button::LeftTrigger2),
             zr: self.trigger_pressed(gamepad, Axis::RightZ, Button::RightTrigger2),
-            // Sticks. Y is inverted so up (negative raw) maps to +1 (top).
+            // Sticks. gilrs normalizes Y so up is already +1 on Linux
+            // (IS_Y_AXIS_REVERSED); no inversion needed here.
             left_stick: Stick::new(
                 gamepad.value(Axis::LeftStickX),
-                -gamepad.value(Axis::LeftStickY),
+                gamepad.value(Axis::LeftStickY),
             ),
             right_stick: Stick::new(
                 gamepad.value(Axis::RightStickX),
-                -gamepad.value(Axis::RightStickY),
+                gamepad.value(Axis::RightStickY),
             ),
             // Battery will be set by bridge.rs after this call
             battery: 0,
@@ -71,11 +74,13 @@ impl XboxInput {
         // gilrs trigger axes are [-1 .. 1] with the resting value at -1.0.
         let axis_to_value = |v: f32| ((v + 1.0) / 2.0).clamp(0.0, 1.0);
         XboxInput {
-            // Xbox button labels: South=A, East=B, West=X, North=Y.
+            // Xbox button labels: South=A, East=B, North=X, West=Y (gilrs
+            // Button::North = evdev 0x133 = physical Xbox X, Button::West
+            // = evdev 0x134 = physical Xbox Y).
             a: gamepad.is_pressed(Button::South),
             b: gamepad.is_pressed(Button::East),
-            x: gamepad.is_pressed(Button::West),
-            y: gamepad.is_pressed(Button::North),
+            x: gamepad.is_pressed(Button::North),
+            y: gamepad.is_pressed(Button::West),
             lb: gamepad.is_pressed(Button::LeftTrigger),
             rb: gamepad.is_pressed(Button::RightTrigger),
             lt: gamepad.is_pressed(Button::LeftTrigger2) || lt_axis >= TRIGGER_THRESHOLD,
@@ -91,14 +96,14 @@ impl XboxInput {
             dpad_down: gamepad.is_pressed(Button::DPadDown),
             dpad_left: gamepad.is_pressed(Button::DPadLeft),
             dpad_right: gamepad.is_pressed(Button::DPadRight),
-            // Y inverted so up (negative raw) is positive, matching Stick.
+            // Y already normalized by gilrs (up = +1 on Linux), matching Stick.
             left_stick: Stick::new(
                 gamepad.value(Axis::LeftStickX),
-                -gamepad.value(Axis::LeftStickY),
+                gamepad.value(Axis::LeftStickY),
             ),
             right_stick: Stick::new(
                 gamepad.value(Axis::RightStickX),
-                -gamepad.value(Axis::RightStickY),
+                gamepad.value(Axis::RightStickY),
             ),
         }
     }
